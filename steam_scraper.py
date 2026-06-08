@@ -34,6 +34,7 @@ class GameDeal:
     """统一的游戏折扣数据结构"""
     appid: int
     name: str
+    name_en: str = ""
     original_price_cents: int = 0
     final_price_cents: int = 0
     discount_percent: int = 0
@@ -134,16 +135,39 @@ class SteamScraper:
 
         raise last_exc  # 让调用方处理
 
+    def _fetch_en_names(self) -> dict[int, str]:
+        """获取英文游戏名，返回 {appid: english_name}"""
+        try:
+            resp = self._client.get(
+                f"{self.API_BASE}/featuredcategories",
+                params={"l": "english", "cc": "US"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("specials", {}).get("items", [])
+            return {item["id"]: item["name"] for item in items if "id" in item}
+        except Exception as e:
+            logger.warning(f"获取英文名失败: {e}")
+            return {}
+
     # ------------------------------------------------------------------
     # 特惠游戏
     # ------------------------------------------------------------------
 
     def get_deals(self) -> list[GameDeal]:
-        """获取 Steam 当前特惠游戏"""
+        """获取 Steam 当前特惠游戏（含英文名）"""
         try:
             data = self._fetch_featured()
             items = data.get("specials", {}).get("items", [])
-            return [self._api_item_to_deal(item) for item in items]
+            deals = [self._api_item_to_deal(item) for item in items]
+
+            # 叠加英文名
+            en_names = self._fetch_en_names()
+            for d in deals:
+                if d.appid in en_names and en_names[d.appid] != d.name:
+                    d.name_en = en_names[d.appid]
+
+            return deals
         except httpx.HTTPStatusError as e:
             logger.error(f"Steam API HTTP {e.response.status_code}")
             return []

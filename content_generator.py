@@ -36,17 +36,24 @@ def _discount_tag(d: GameDeal) -> tuple:
     return "💫", "#95a5a6", ""
 
 
-def _game_card(d: GameDeal, image_map: dict = None) -> str:
+def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     """Generate HTML card for a single game deal."""
     if image_map is None:
         image_map = {}
     emoji, color, label = _discount_tag(d)
+
+    rank_badge = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;background:{color};color:#fff;border-radius:50%;font-size:11px;font-weight:bold;margin-right:6px">{rank}</span>' if rank else ''
 
     badge = f'<span style="background:{color};color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:12px">{emoji} -{d.discount_percent}%</span>'
 
     price = f'<span style="font-weight:bold;font-size:15px;color:{color}">{d.final_price}</span>'
     if d.original_price_cents > 0:
         price += f' <span style="font-size:12px;color:#999;text-decoration:line-through">{d.original_price}</span>'
+
+    # Bilingual name format
+    display_name = d.name
+    if d.name_en and d.name_en != d.name:
+        display_name = f"{d.name_en} / {d.name}"
 
     # Review score (if available from API)
     review = ""
@@ -61,7 +68,7 @@ def _game_card(d: GameDeal, image_map: dict = None) -> str:
     return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0">
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div>
-<div style="margin-bottom:4px">{badge} <span style="font-weight:bold;font-size:14px">{d.name}</span></div>
+<div style="margin-bottom:4px">{rank_badge}{badge} <span style="font-weight:bold;font-size:14px">{display_name}</span></div>
 <div>{price}</div>
 {review}
 </div>
@@ -123,23 +130,23 @@ class ArticleGenerator:
         if tier1:
             parts.append('<h3 style="color:#e74c3c">🔥 史低专区</h3>')
             parts.append('<p style="font-size:12px;color:#999">折扣 75% 以上，历史最低价</p>')
-            for d in tier1:
-                parts.append(_game_card(d, image_map))
+            for i, d in enumerate(tier1, 1):
+                parts.append(_game_card(d, rank=i, image_map=image_map))
 
         # Section: 超值专区 (50-74%)
         tier2 = [d for d in unique if 50 <= d.discount_percent < 75]
         if tier2:
             parts.append('<h3>⭐ 超值推荐</h3>')
             parts.append('<p style="font-size:12px;color:#999">折扣 50% 以上，值得入手</p>')
-            for d in tier2:
-                parts.append(_game_card(d, image_map))
+            for i, d in enumerate(tier2, 1):
+                parts.append(_game_card(d, rank=i, image_map=image_map))
 
         # Section: 其他折扣 (<50%)
         tier3 = [d for d in unique if d.discount_percent < 50]
         if tier3:
             parts.append('<h3>💫 更多折扣</h3>')
-            for d in tier3:
-                parts.append(_game_card(d, image_map))
+            for i, d in enumerate(tier3, 1):
+                parts.append(_game_card(d, rank=i, image_map=image_map))
 
         # Epic free section
         if epic_free:
