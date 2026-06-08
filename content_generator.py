@@ -1,12 +1,16 @@
-"""
-AI 内容生成器
+"""Rich article generator for WeChat Official Account
 
-调用 DeepSeek API 根据游戏折扣数据生成公众号文章。
+Generates HTML articles with:
+- Steam game header images (from Steam CDN)
+- Color-coded discount badges
+- Review scores when available
+- Clean sections
 """
 
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Optional
 import httpx
@@ -15,17 +19,62 @@ from steam_scraper import GameDeal
 
 logger = logging.getLogger(__name__)
 
+# Discount tiers: (min, max, emoji, hex_color, label)
+DISCOUNT_TIERS = [
+    (75, 100, "🔥", "#e74c3c", "史低"),
+    (50, 74, "⭐", "#e67e22", "超值"),
+    (25, 49, "👍", "#f1c40f", "推荐"),
+    (0, 24, "💫", "#95a5a6", "一般"),
+]
 
-# 从环境变量读取 API key
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+
+def _discount_tag(d: GameDeal) -> tuple:
+    """Return (emoji, hex_color, label) for the discount level."""
+    for lo, hi, emoji, color, label in DISCOUNT_TIERS:
+        if lo <= d.discount_percent <= hi:
+            return emoji, color, label
+    return "💫", "#95a5a6", ""
+
+
+def _game_card(d: GameDeal, image_map: dict = None) -> str:
+    """Generate HTML card for a single game deal."""
+    if image_map is None:
+        image_map = {}
+    emoji, color, label = _discount_tag(d)
+
+    badge = f'<span style="background:{color};color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:12px">{emoji} -{d.discount_percent}%</span>'
+
+    price = f'<span style="font-weight:bold;font-size:15px;color:{color}">{d.final_price}</span>'
+    if d.original_price_cents > 0:
+        price += f' <span style="font-size:12px;color:#999;text-decoration:line-through">{d.original_price}</span>'
+
+    # Review score (if available from API)
+    review = ""
+    if d.review_score > 0:
+        stars = "🌟🌟🌟" if d.review_score >= 90 else "🌟🌟" if d.review_score >= 70 else "🌟"
+        review = f'<div style="font-size:12px;color:#27ae60;margin-top:4px">{stars} {d.review_desc}</div>'
+
+    # Game header image - use WeChat CDN URL if available
+    img_url = image_map.get(d.appid, f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{d.appid}/header.jpg")
+    img = f'<img src="{img_url}" style="width:100%;max-width:460px;border-radius:6px;margin:8px 0 0 0"/>'
+
+    return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<div style="margin-bottom:4px">{badge} <span style="font-weight:bold;font-size:14px">{d.name}</span></div>
+<div>{price}</div>
+{review}
+</div>
+</div>
+{img}
+</div>'''
 
 
 class ArticleGenerator:
-    """AI 公众号文章生成器"""
+    """WeChat Official Account article generator"""
 
     def __init__(self, api_key: str = ""):
-        self.api_key = api_key or DEEPSEEK_API_KEY
+        self.api_key = api_key or ""
         self._client: Optional[httpx.Client] = None
 
     def __enter__(self):
@@ -38,178 +87,105 @@ class ArticleGenerator:
         if self._client:
             self._client.close()
 
-    def _get_client(self) -> httpx.Client:
-        """懒初始化 HTTP 客户端（没 key 时无需创建）"""
-        if self._client is None:
-            self._client = httpx.Client(
-                timeout=60,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            )
-        return self._client
-
     def generate_daily_digest(
-        self, steam_deals: list[GameDeal], epic_free: list[GameDeal]
+        self, steam_deals: list[GameDeal], epic_free: list[GameDeal],
+        image_map: dict = None
     ) -> str:
-        """生成每日折扣简报文章"""
-        today = datetime.now().strftime("%Y年%m月%d日")
+        """Generate a rich WeChat article from deal data.
+        image_map: {appid: wechat_cdn_url} for game images uploaded to WeChat.
+        """
+        if image_map is None:
+            image_map = {}
+        today_cn = datetime.now().strftime("%Y年%m月%d日")
 
-        # 按折扣排序，取前20
-        sorted_deals = sorted(steam_deals, key=lambda d: d.discount_percent, reverse=True)[:20]
+        # Dedup by appid, sort by discount descending
+        seen = set()
+        unique = []
+        for d in sorted(steam_deals, key=lambda x: x.discount_percent, reverse=True):
+            if d.appid not in seen:
+                seen.add(d.appid)
+                unique.append(d)
 
-        if not sorted_deals and not epic_free:
-            return self._empty_digest(today)
+        if not unique and not epic_free:
+            return f'''<h2>📭 暂无折扣数据</h2>
+<p>{today_cn}，Steam 数据暂时不可达。</p>
+<blockquote>建议直接访问 Steam 查看最新特惠</blockquote>'''
 
-        # 构建数据
-        deals_text = "\n".join(
-            f"{i+1}. 【-{d.discount_percent}%】{d.name} — 原价{d.original_price}，现价{d.final_price}"
-            for i, d in enumerate(sorted_deals[:15])
-        )
+        parts = []
 
-        free_text = "\n".join(
-            f"{i+1}. {d.name}（免费领！）"
-            for i, d in enumerate(epic_free)
-        ) or "暂无"
+        # Header
+        parts.append(f'<h2>🎮 Steam 今日特惠</h2>')
+        parts.append(f'<p style="color:#666;font-size:13px">{today_cn} · 共 {len(unique)} 款折扣</p>')
+        parts.append('<hr style="border:none;border-top:1px solid #eee;margin:12px 0"/>')
 
-        system_prompt = """你是一个游戏折扣公众号的主编。你的文章风格：
-- 口语化、接地气、带一点幽默
-- 开头写一段引语，聊聊当天游戏圈的小热点
-- 每个游戏用1-2句话推荐，突出折扣力度和值得买的理由
-- 结尾加一句互动引导
-- 不用markdown，用纯文字
-- 全文400-600字"""
+        # Section: 史低专区 (≥75%)
+        tier1 = [d for d in unique if d.discount_percent >= 75]
+        if tier1:
+            parts.append('<h3 style="color:#e74c3c">🔥 史低专区</h3>')
+            parts.append('<p style="font-size:12px;color:#999">折扣 75% 以上，历史最低价</p>')
+            for d in tier1:
+                parts.append(_game_card(d, image_map))
 
-        user_prompt = f"""今天是{today}。请写一篇「今日Steam折扣简报」公众号文章。
+        # Section: 超值专区 (50-74%)
+        tier2 = [d for d in unique if 50 <= d.discount_percent < 75]
+        if tier2:
+            parts.append('<h3>⭐ 超值推荐</h3>')
+            parts.append('<p style="font-size:12px;color:#999">折扣 50% 以上，值得入手</p>')
+            for d in tier2:
+                parts.append(_game_card(d, image_map))
 
-Steam今日特惠（按折扣排序）：
-{deals_text}
+        # Section: 其他折扣 (<50%)
+        tier3 = [d for d in unique if d.discount_percent < 50]
+        if tier3:
+            parts.append('<h3>💫 更多折扣</h3>')
+            for d in tier3:
+                parts.append(_game_card(d, image_map))
 
-Epic免费游戏：
-{free_text}
+        # Epic free section
+        if epic_free:
+            parts.append('<h3 style="color:#e74c3c">🎁 Epic 本周免费</h3>')
+            for d in epic_free:
+                parts.append(f'''<div style="background:#f0faf0;border:1px solid #c8e6c9;border-radius:10px;padding:12px;margin:12px 0;text-align:center">
+<span style="background:#e74c3c;color:#fff;padding:2px 8px;border-radius:3px;font-weight:bold;font-size:12px">🆓 免费</span>
+<div style="font-weight:bold;font-size:15px;margin:8px 0">{d.name}</div>
+<img src="{d.header_image}" style="width:100%;border-radius:6px"/>
+<div style="color:#e74c3c;font-size:13px;margin-top:8px">⏰ 限时领取，过期不候！</div>
+</div>''')
 
-要求：口语化公众号风格，第一段引语写一下最近的热门游戏话题，重点推荐折扣>50%的游戏。"""
+        # Footer
+        parts.extend([
+            '<hr style="border:none;border-top:1px solid #eee;margin:16px 0"/>',
+            '<blockquote style="font-size:12px;color:#999">📊 数据来源：Steam Store API · 每日 10:00 自动更新<br/>📱 关注本号，每日推送最值得买的游戏折扣</blockquote>',
+        ])
 
-        if not self.api_key:
-            return self._template_digest(today, sorted_deals, epic_free)
-
-        try:
-            resp = self._get_client().post(
-                f"{DEEPSEEK_BASE_URL}/chat/completions",
-                json={
-                    "model": "deepseek-chat",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 1500,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            return content.strip()
-        except Exception as e:
-            logger.error(f"AI 生成失败: {e}")
-            return self._template_digest(today, sorted_deals, epic_free)
+        return "\n".join(parts)
 
     def generate_free_game_alert(self, epic_free: list[GameDeal]) -> str:
-        """生成限免/免费游戏提醒"""
-        today = datetime.now().strftime("%Y年%m月%d日")
-
+        """Generate Epic free games alert."""
         if not epic_free:
             return ""
+        parts = [
+            '<h2>🎉 Epic 本周免费</h2>',
+            '<p style="color:#e74c3c">🆓 限时免费领取，错过不再！</p>',
+        ]
+        for d in epic_free:
+            parts.append(f'''<div style="background:#f0faf0;border:1px solid #c8e6c9;border-radius:10px;padding:12px;margin:12px 0">
+<div style="font-weight:bold;font-size:15px">{d.name}</div>
+<img src="{d.header_image}" style="width:100%;border-radius:6px"/>
+<div style="color:#e74c3c;font-size:12px;margin-top:8px">⏰ 本周限免</div>
+</div>''')
+        return "\n".join(parts)
 
-        free_list = "\n".join(
-            f"🎮 {d.name}" for d in epic_free
-        )
-
-        system_prompt = """你是一个游戏福利提醒公众号。风格：激动、紧迫感、简短有力。"""
-        user_prompt = f"""写一篇「本周Epic免费游戏」提醒短文，300字左右。
-
-本周免费：
-{free_list}
-
-要求：强调免费、限时领取、截止日期，语气有紧迫感。"""
-
-        if not self.api_key:
-            return f"""🎉 本周Epic免费游戏
-
-{free_list}
-
-⏰ 限时免费，错过不再！快去领取。
-
-—— 游戏好价Agent"""
-
-        try:
-            resp = self._get_client().post(
-                f"{DEEPSEEK_BASE_URL}/chat/completions",
-                json={
-                    "model": "deepseek-chat",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 800,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            logger.error(f"AI 生成免费提醒失败: {e}")
-            return f"🎉 本周Epic免费游戏\n\n{free_list}\n\n⏰ 限时免费，快去领取！"
-
-    def _empty_digest(self, today: str) -> str:
-        return f"""📭 今日({today})暂无游戏折扣数据
-
-可能是 Steam API 暂时不可达，数据将在下次更新时恢复。
-
-💡 建议直接访问 Steam 查看最新特惠。
-
-—— 游戏好价Agent"""
-
-    def _template_digest(
-        self, today: str, deals: list[GameDeal], epic_free: list[GameDeal]
-    ) -> str:
-        """无 API Key 时使用模板生成"""
-        lines = [f"📢 今日Steam折扣简报 | {today}", ""]
-
-        if deals:
-            lines.append("🔥 热门特惠：")
-            for d in deals[:12]:
-                tag = "🔥" if d.discount_percent >= 50 else "💫"
-                lines.append(f"  {tag} 【-{d.discount_percent}%】{d.name}")
-                lines.append(f"     原价{d.original_price} → 现价{d.final_price}")
-            lines.append("")
-
-        if epic_free:
-            lines.append("🎁 Epic 本周免费：")
-            for d in epic_free:
-                lines.append(f"  🆓 {d.name}")
-            lines.append("")
-
-        lines.append("💡 数据来源: Steam / Epic API")
-        lines.append("—— 游戏好价Agent，每日自动更新")
-
-        return "\n".join(lines)
 
 
 def main():
-    """测试"""
     logging.basicConfig(level=logging.INFO)
-
-    # 测试模板模式
     from steam_scraper import SteamScraper
-
-    with SteamScraper() as s:
+    with SteamScraper(timeout=30) as s:
         deals = s.get_deals()
-
-    gen = ArticleGenerator(api_key="")  # 无 key 时用模板
+    gen = ArticleGenerator()
     article = gen.generate_daily_digest(deals, [])
     print(article)
-    print("\n" + "=" * 40)
-    print(f"\n文章长度: {len(article)} 字")
-
 
 if __name__ == "__main__":
     main()

@@ -14,6 +14,7 @@ Steam 折扣/特惠爬虫
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
