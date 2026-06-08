@@ -1,12 +1,11 @@
-"""
-每日游戏折扣公众号内容生成入口
+"""每日游戏折扣公众号内容生成入口
 
 由 Hermes cron 定时调用，串联全流程：
 1. 爬取 Steam 特惠 + 热销
 2. 爬取 Epic 免费游戏
 3. AI/模板生成公众号文章
 4. 保存到 output/ 目录
-5. 返回结果给 cron 推送
+5. 尝试推送到公众号（自动创建草稿，手动或自动发布）
 """
 
 import logging
@@ -14,7 +13,6 @@ import os
 import sys
 from datetime import datetime
 
-# 确保可以找到同目录的模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from steam_scraper import SteamScraper
@@ -25,6 +23,37 @@ from wechat_publisher import publish_article, Article as WeChatArticle, WeChatEr
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+
+
+def _md_to_html(md_text: str) -> str:
+    """Simple markdown to HTML conversion for WeChat articles."""
+    lines = md_text.split("\n")
+    html_parts = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("# "):
+            html_parts.append(f"<h2>{stripped[2:]}</h2>")
+        elif stripped.startswith("## "):
+            html_parts.append(f"<h3>{stripped[3:]}</h3>")
+        elif stripped.startswith("### "):
+            html_parts.append(f"<h4>{stripped[4:]}</h4>")
+        elif stripped.startswith("- **"):
+            # Bold list item: "- **Game** - desc"
+            item = stripped[2:]
+            html_parts.append(f"<li>{item}</li>")
+        elif stripped.startswith("- "):
+            html_parts.append(f"<li>{stripped[2:]}</li>")
+        elif stripped.startswith("> "):
+            html_parts.append(f"<blockquote>{stripped[2:]}</blockquote>")
+        elif stripped.startswith("---"):
+            html_parts.append("<hr/>")
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            html_parts.append(f"<p><strong>{stripped[2:-2]}</strong></p>")
+        else:
+            html_parts.append(f"<p>{stripped}</p>")
+    return "".join(html_parts)
 
 
 def run_daily_digest() -> str:
@@ -56,7 +85,6 @@ def run_daily_digest() -> str:
     gen = ArticleGenerator()
     article = gen.generate_daily_digest(steam_deals, epic_free)
 
-    # 如果有 Epic 免费，额外生成提醒
     free_alert = ""
     if epic_free:
         free_alert = gen.generate_free_game_alert(epic_free)
@@ -75,22 +103,28 @@ def run_daily_digest() -> str:
 
     # ---- Step 6: 推送到公众号 ----
     wechat_published = False
+    draft_saved = False
     wechat_error = ""
     try:
-        # 检查凭证是否配置
-        get_access_token()  # 未配置或 IP 未加白时会抛出
+        token = get_access_token()
+        html_content = _md_to_html(article)
 
         wc_article = WeChatArticle(
-            title=f"🎮 今日游戏好价 | {datetime.now().strftime('%m月%d日')}",
-            content=article,
-            author="游戏好价Agent",
-            digest=f"Steam {len(steam_deals)}个折扣 · Epic {len(epic_free)}个免费" if steam_deals or epic_free else "今日游戏好价速览",
+            title=f"Steam 今日特惠 | {datetime.now().strftime('%m月%d日')}",
+            content=html_content,
+            author="好价Agent",
+            digest="",
         )
 
         result = publish_article(wc_article)
         if result.success:
             wechat_published = True
+            draft_saved = True
             logger.info(f"✅ 公众号已发布: publish_id={result.publish_id}")
+        elif result.draft_saved:
+            draft_saved = True
+            wechat_error = result.error or "未知"
+            logger.info(f"✅ 草稿已保存，自动发布不可用: {wechat_error}")
         else:
             wechat_error = result.error or "未知错误"
             logger.warning(f"❌ 公众号发布失败: {wechat_error}")
@@ -126,6 +160,8 @@ def run_daily_digest() -> str:
 
     if wechat_published:
         summary += f"\n✅ 公众号已发布"
+    elif draft_saved:
+        summary += f"\n✅ 草稿已保存（去 mp.weixin.qq.com 点 发布）"
     elif wechat_error:
         summary += f"\n❌ 公众号发布失败: {wechat_error[:60]}"
 

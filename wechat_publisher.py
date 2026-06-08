@@ -2,7 +2,11 @@
 """
 WeChat Official Account publisher for game discount agent.
 
-Flow: get access_token → create draft (草稿) → publish draft (发布)
+Flow: 
+  1. upload_thumb() → get thumb_media_id (permanent material)
+  2. create_draft() → create draft with thumb (works for all accounts)
+  3. publish_draft() → submit for publication (requires beta access, may fail 48001)
+  4. If publish fails, draft is still saved in 草稿箱 for manual publish
 
 Environment variables:
   WECHAT_APPID     - AppID from mp.weixin.qq.com
@@ -17,14 +21,14 @@ import sys
 import json
 import time
 import logging
+import http.client
+import struct
+import zlib
 from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
 
-# Ensure we can import sibling modules when run standalone
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
-
-# httpx for HTTP requests (already in requirements.txt)
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -32,13 +36,16 @@ logger = logging.getLogger(__name__)
 TOKEN_URL = "https://api.weixin.qq.com/cgi-bin/token"
 DRAFT_ADD_URL = "https://api.weixin.qq.com/cgi-bin/draft/add"
 PUBLISH_URL = "https://api.weixin.qq.com/cgi-bin/freepublish/submit"
+MATERIAL_ADD_URL = "https://api.weixin.qq.com/cgi-bin/material/add_material"
 
-# Token cache (valid for 7200s, refresh at 6000s)
+THUMB_DIR = Path(__file__).parent / "assets"
+THUMB_PATH = THUMB_DIR / "thumb_default.png"
+
 _token_cache: dict = {"token": None, "expires_at": 0}
+_thumb_cache: dict = {"media_id": None, "checked": False}
 
 
 class WeChatError(Exception):
-    """WeChat API returned an error."""
     def __init__(self, errcode: int, errmsg: str):
         self.errcode = errcode
         self.errmsg = errmsg
@@ -47,10 +54,9 @@ class WeChatError(Exception):
 
 @dataclass
 class Article:
-    """A single article to publish."""
     title: str
     content: str
-    author: str = "游戏好价Agent"
+    author: str = "好价Agent"
     digest: str = ""
     content_source_url: str = ""
     thumb_media_id: str = ""
@@ -60,25 +66,38 @@ class Article:
 
 @dataclass
 class PublishResult:
-    """Result of a publish operation."""
     success: bool
     publish_id: Optional[str] = None
-    article_url: Optional[str] = None
-    error: Optional[str] = None
+    draft_saved: bool = False
     draft_media_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+def _make_thumb_png() -> bytes:
+    """Create a 300x200 dark-themed PNG thumbnail for articles."""
+    w, h = 300, 200
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    ihdr_crc = struct.pack(">I", 0xFFFFFFFF & zlib.crc32(b"IHDR" + ihdr_data))
+    ihdr = struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data + ihdr_crc
+    raw = b""
+    for y in range(h):
+        raw += b"\x00"
+        for x in range(w):
+            raw += bytes([int(40+x*0.3), int(60+y*0.4), int(120+(x+y)*0.2)])
+    compressed = zlib.compress(raw)
+    idat_crc = struct.pack(">I", 0xFFFFFFFF & zlib.crc32(b"IDAT" + compressed))
+    idat = struct.pack(">I", len(compressed)) + b"IDAT" + compressed + idat_crc
+    iend_crc = struct.pack(">I", 0xFFFFFFFF & zlib.crc32(b"IEND"))
+    iend = struct.pack(">I", 0) + b"IEND" + iend_crc
+    return sig + ihdr + idat + iend
 
 
 def _get_credentials() -> tuple[str, str]:
-    """Get AppID and AppSecret from environment."""
     appid = os.environ.get("WECHAT_APPID", "")
     secret = os.environ.get("WECHAT_APPSECRET", "")
-    
-    # Fallback: try .env file
     if not appid or not secret:
-        env_paths = [
-            "/root/.hermes/.env",
-            Path(__file__).parent / ".env",
-        ]
+        env_paths = ["/root/.hermes/.env", Path(__file__).parent / ".env"]
         for env_path in env_paths:
             if os.path.exists(env_path):
                 with open(env_path) as f:
@@ -90,68 +109,60 @@ def _get_credentials() -> tuple[str, str]:
                             secret = line.split("=", 1)[1]
                 if appid and secret:
                     break
-    
     return appid, secret
 
 
-def get_access_token(force_refresh: bool = False) -> str:
-    """
-    Get WeChat API access_token with caching.
-    Token is valid for 7200s; refresh at 6000s.
-    """
-    global _token_cache
+def _multipart_upload(client: httpx.Client, url: str, token: str, file_bytes: bytes, filename: str, content_type: str) -> dict:
+    """Upload a file using multipart/form-data."""
+    boundary = "----FormBoundary7MA4YWxkTrZu0gW"
+    body_parts = []
+    for line in [
+        f"--{boundary}\r\n",
+        f'Content-Disposition: form-data; name="media"; filename="{filename}"\r\n',
+        f"Content-Type: {content_type}\r\n",
+        "\r\n",
+    ]:
+        body_parts.append(line.encode())
+    body_parts.append(file_bytes)
+    body_parts.append(f"\r\n--{boundary}--\r\n".encode())
+    body = b"".join(body_parts)
     
+    resp = client.post(
+        url,
+        params={"access_token": token, "type": "thumb"},
+        content=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    return resp.json()
+
+
+def get_access_token(force_refresh: bool = False) -> str:
+    global _token_cache
     now = time.time()
     if not force_refresh and _token_cache["token"] and now < _token_cache["expires_at"]:
         return _token_cache["token"]
-    
     appid, secret = _get_credentials()
     if not appid or not secret:
         raise WeChatError(-1, "WECHAT_APPID or WECHAT_APPSECRET not set")
-    
-    params = {
-        "grant_type": "client_credential",
-        "appid": appid,
-        "secret": secret,
-    }
-    
     with httpx.Client(timeout=15) as client:
-        resp = client.get(TOKEN_URL, params=params)
+        resp = client.get(TOKEN_URL, params={"grant_type": "client_credential", "appid": appid, "secret": secret})
         data = resp.json()
-    
     if "access_token" in data:
         _token_cache["token"] = data["access_token"]
-        # Refresh at 6000s to avoid edge-of-expiry race conditions
         _token_cache["expires_at"] = now + max(data.get("expires_in", 7200) - 1200, 600)
         return _token_cache["token"]
     else:
-        errcode = data.get("errcode", -1)
-        errmsg = data.get("errmsg", "Unknown error")
-        raise WeChatError(errcode, errmsg)
+        raise WeChatError(data.get("errcode", -1), data.get("errmsg", "Unknown error"))
 
 
-def create_draft(article: Article, client: Optional[httpx.Client] = None) -> str:
+def ensure_thumb(client: Optional[httpx.Client] = None) -> str:
     """
-    Create a draft (草稿) from article content.
-    Returns media_id for use in publish.
+    Ensure we have a thumb_media_id for draft creation.
+    Creates and uploads a default thumbnail if needed.
     """
-    token = get_access_token()
-    
-    # Build article payload
-    article_data = {
-        "title": article.title,
-        "author": article.author,
-        "digest": article.digest or article.title,
-        "content": article.content,
-        "need_open_comment": article.need_open_comment,
-        "only_fans_can_comment": article.only_fans_can_comment,
-    }
-    if article.content_source_url:
-        article_data["content_source_url"] = article.content_source_url
-    if article.thumb_media_id:
-        article_data["thumb_media_id"] = article.thumb_media_id
-    
-    payload = {"articles": [article_data]}
+    global _thumb_cache
+    if _thumb_cache["media_id"] and _thumb_cache["checked"]:
+        return _thumb_cache["media_id"]
     
     close_client = False
     if client is None:
@@ -159,20 +170,87 @@ def create_draft(article: Article, client: Optional[httpx.Client] = None) -> str
         close_client = True
     
     try:
+        token = get_access_token()
+        
+        # Check if we already have a material
+        resp = client.get(
+            "https://api.weixin.qq.com/cgi-bin/material/get_materialcount",
+            params={"access_token": token},
+        )
+        count_data = resp.json()
+        has_existing = count_data.get("image_count", 0) > 0
+        
+        if has_existing:
+            # Try to reuse first existing thumb
+            resp2 = client.post(
+                "https://api.weixin.qq.com/cgi-bin/material/batchget_material",
+                params={"access_token": token},
+                json={"type": "image", "offset": 0, "count": 1},
+            )
+            items = resp2.json().get("item", [])
+            if items and "media_id" in items[0]:
+                _thumb_cache["media_id"] = items[0]["media_id"]
+                _thumb_cache["checked"] = True
+                return _thumb_cache["media_id"]
+        
+        # Create and upload default thumb
+        png_bytes = _make_thumb_png()
+        logger.info(f"Uploading default thumbnail ({len(png_bytes)} bytes)...")
+        
+        upload_url = f"https://api.weixin.qq.com/cgi-bin/material/add_material"
+        result = _multipart_upload(client, upload_url, token, png_bytes, "thumb_default.png", "image/png")
+        
+        if "media_id" in result:
+            _thumb_cache["media_id"] = result["media_id"]
+            _thumb_cache["checked"] = True
+            logger.info(f"Thumb uploaded: {result['media_id'][:20]}...")
+            return result["media_id"]
+        else:
+            raise WeChatError(result.get("errcode", -1), result.get("errmsg", "Thumb upload failed"))
+    finally:
+        if close_client:
+            client.close()
+
+
+def create_draft(article: Article, client: Optional[httpx.Client] = None) -> str:
+    """
+    Create a draft in WeChat 草稿箱 with a proper thumbnail.
+    Returns media_id (this is saved as a draft for later manual or automatic publish).
+    """
+    token = get_access_token()
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=30)
+        close_client = True
+    
+    try:
+        # Get or create thumb
+        thumb_id = article.thumb_media_id or ensure_thumb(client)
+        
+        article_data = {
+            "title": article.title,
+            "thumb_media_id": thumb_id,
+            "author": article.author[:10],  # WeChat limits author to ~10 chars
+            "digest": (article.digest or article.title)[:60],
+            "content": article.content,
+            "need_open_comment": article.need_open_comment,
+            "only_fans_can_comment": article.only_fans_can_comment,
+        }
+        if article.content_source_url:
+            article_data["content_source_url"] = article.content_source_url
+        
         resp = client.post(
             DRAFT_ADD_URL,
             params={"access_token": token},
-            json=payload,
+            json={"articles": [article_data]},
         )
         data = resp.json()
         
         if "media_id" in data:
-            logger.info(f"Draft created: media_id={data['media_id']}")
+            logger.info(f"Draft created: {data['media_id'][:20]}...")
             return data["media_id"]
         else:
-            errcode = data.get("errcode", -1)
-            errmsg = data.get("errmsg", "Unknown error")
-            raise WeChatError(errcode, errmsg)
+            raise WeChatError(data.get("errcode", -1), data.get("errmsg", "Draft create failed"))
     finally:
         if close_client:
             client.close()
@@ -180,12 +258,11 @@ def create_draft(article: Article, client: Optional[httpx.Client] = None) -> str
 
 def publish_draft(media_id: str, client: Optional[httpx.Client] = None) -> PublishResult:
     """
-    Publish a draft via freepublish/submit.
-    Returns publish result with publish_id.
+    Publish a draft via freepublish/submit API.
+    Note: This API requires the account to be in the 发布能力 beta (gray rollout).
+    If it fails with 48001, the draft is still saved in 草稿箱 for manual publish.
     """
     token = get_access_token()
-    payload = {"media_id": media_id}
-    
     close_client = False
     if client is None:
         client = httpx.Client(timeout=30)
@@ -195,50 +272,24 @@ def publish_draft(media_id: str, client: Optional[httpx.Client] = None) -> Publi
         resp = client.post(
             PUBLISH_URL,
             params={"access_token": token},
-            json=payload,
+            json={"media_id": media_id},
         )
         data = resp.json()
         
         if data.get("errcode") == 0:
-            publish_id = data.get("publish_id", "")
-            logger.info(f"Publish submitted: publish_id={publish_id}")
-            return PublishResult(
-                success=True,
-                publish_id=publish_id,
-                draft_media_id=media_id,
-            )
+            pid = data.get("publish_id", "")
+            logger.info(f"Published! publish_id={pid}")
+            return PublishResult(success=True, publish_id=pid, draft_media_id=media_id, draft_saved=True)
         else:
             errcode = data.get("errcode", -1)
-            errmsg = data.get("errmsg", "Unknown error")
-            logger.error(f"Publish failed: [{errcode}] {errmsg}")
+            errmsg = data.get("errmsg", "Unknown")
+            logger.warning(f"Publish API not available [{errcode}]: {errmsg}")
             return PublishResult(
                 success=False,
-                error=f"[{errcode}] {errmsg}",
+                draft_saved=True,
                 draft_media_id=media_id,
+                error=f"[{errcode}] {errmsg}",
             )
-    finally:
-        if close_client:
-            client.close()
-
-
-def check_publish_status(publish_id: str, client: Optional[httpx.Client] = None) -> dict:
-    """
-    Check the status of a publish submission.
-    """
-    token = get_access_token()
-    
-    close_client = False
-    if client is None:
-        client = httpx.Client(timeout=15)
-        close_client = True
-    
-    try:
-        resp = client.post(
-            "https://api.weixin.qq.com/cgi-bin/freepublish/get",
-            params={"access_token": token},
-            json={"publish_id": publish_id},
-        )
-        return resp.json()
     finally:
         if close_client:
             client.close()
@@ -246,91 +297,86 @@ def check_publish_status(publish_id: str, client: Optional[httpx.Client] = None)
 
 def publish_article(article: Article) -> PublishResult:
     """
-    Full publish flow: create draft → publish draft.
+    Full publish flow: create draft → attempt publish.
+    Even if publish fails, the draft is saved in 草稿箱.
     """
     try:
         # Step 1: Create draft
         logger.info(f"Creating draft: {article.title}")
         media_id = create_draft(article)
         
-        # Step 2: Publish draft
-        logger.info(f"Publishing draft: {media_id}")
+        # Step 2: Attempt publish
+        logger.info(f"Attempting to publish draft...")
         result = publish_draft(media_id)
         
         if result.success:
-            logger.info(f"Published successfully: publish_id={result.publish_id}")
+            logger.info(f"✓ Published: publish_id={result.publish_id}")
         else:
-            logger.error(f"Publish failed: {result.error}")
+            logger.info(f"✓ Draft saved (media_id={media_id[:20]}...), publish deferred")
+            logger.info(f"  Reason: {result.error}")
+            logger.info(f"  → Go to mp.weixin.qq.com → 草稿箱 → click 发布")
         
         return result
-        
     except WeChatError as e:
         logger.error(f"WeChat API error: {e}")
-        return PublishResult(success=False, error=str(e))
+        return PublishResult(success=False, draft_saved=False, error=str(e))
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        return PublishResult(success=False, error=str(e))
+        return PublishResult(success=False, draft_saved=False, error=str(e))
 
 
 def main():
-    """Command-line entry point: test the publisher with a sample article."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-    )
+    """CLI test: upload thumb → create draft → try publish."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    print("=" * 50)
+    print("WeChat Publisher Test")
+    print("=" * 50)
     
-    print("=== WeChat Publisher Test ===")
-    
-    # Step 1: Test credentials / access_token
-    print("\n1. Testing access_token...")
+    # Step 1: Get token
+    print("\n1. Getting access_token...")
     try:
         token = get_access_token()
-        print(f"   ✓ Token obtained: {token[:10]}...{token[-5:]}")
+        print(f"   ✓ Token: {token[:10]}...")
     except WeChatError as e:
-        print(f"   ✗ Failed: {e}")
-        print("\n   Common causes:")
-        print("   - Server IP not whitelisted at mp.weixin.qq.com → 开发 → 基本配置 → IP白名单")
-        print("   - AppID or AppSecret incorrect")
+        print(f"   ✗ {e}")
         sys.exit(1)
     
-    # Step 2: Create a sample draft
-    print("\n2. Creating sample draft...")
-    article = Article(
-        title="🎮 今日游戏好价 | Steam & Epic 折扣精选",
-        content="<h2>今日折扣速览</h2>"
-        "<p>Steam 和 Epic 今日折扣已更新，来看看有哪些值得入手的好游戏。</p>"
-        "<h3>Steam 精选</h3>"
-        "<ul>"
-        "<li><b>游戏A</b> - 原价 ¥100 现价 ¥30 (-70%)</li>"
-        "<li><b>游戏B</b> - 原价 ¥80 现价 ¥24 (-70%)</li>"
-        "</ul>"
-        "<h3>Epic 免费游戏</h3>"
-        "<ul>"
-        "<li><b>免费游戏X</b> - 本周限免，原价 ¥60</li>"
-        "</ul>"
-        "<p>关注 游戏好价Agent，每日推送最值得买的游戏！</p>",
-        author="游戏好价Agent",
-        digest="每日 Steam + Epic 游戏折扣精选，帮你省钱买好游戏",
-    )
+    # Step 2: Upload thumb
+    print("\n2. Ensuring thumbnail...")
+    try:
+        thumb_id = ensure_thumb()
+        print(f"   ✓ Thumb: {thumb_id[:20]}...")
+    except WeChatError as e:
+        print(f"   ✗ {e}")
+        sys.exit(1)
     
+    # Step 3: Create draft
+    print("\n3. Creating test draft...")
+    article = Article(
+        title="今日游戏好价 | 测试",
+        content="<h2>今日折扣</h2><p>Steam 折扣精选</p><ul><li>游戏A -70%</li><li>游戏B -75%</li></ul>",
+        author="好价Agent",
+        digest="每日游戏折扣精选",
+    )
     try:
         media_id = create_draft(article)
-        print(f"   ✓ Draft created: media_id={media_id}")
+        print(f"   ✓ Draft: {media_id[:20]}...")
     except WeChatError as e:
-        print(f"   ✗ Failed: {e}")
+        print(f"   ✗ {e}")
         sys.exit(1)
     
-    # Step 3: Publish
-    print("\n3. Publishing draft...")
+    # Step 4: Try publish
+    print("\n4. Attempting publish...")
     result = publish_draft(media_id)
     if result.success:
         print(f"   ✓ Published! publish_id={result.publish_id}")
-        print(f"   → 文章已发布到公众号，可在后台查看")
     else:
-        print(f"   ✗ Failed: {result.error}")
-        sys.exit(1)
+        print(f"   ○ Draft saved, auto-publish not available yet")
+        print(f"     Reason: {result.error}")
+        print(f"     Action: Go to mp.weixin.qq.com → 草稿箱 → click 发布")
     
-    print("\n=== All tests passed! ===")
+    print("\n" + "=" * 50)
+    print("Done. Draft saved to 草稿箱 ✅")
 
 
 if __name__ == "__main__":
