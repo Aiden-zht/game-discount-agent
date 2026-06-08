@@ -43,12 +43,13 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     emoji, color, label = _discount_tag(d)
 
     # 折扣标签固定宽度，确保三个区域一致
-    badge = f'<span style="display:inline-block;background:{color};color:#fff;padding:2px 8px;border-radius:3px;font-weight:bold;font-size:12px;min-width:72px;text-align:center">{emoji} -{d.discount_percent}%</span>'
+    badge = f'<span style="display:inline-block;background:{color};color:#fff;padding:2px 8px;border-radius:3px;font-weight:bold;font-size:12px;min-width:72px;text-align:center;margin-right:8px">{emoji} -{d.discount_percent}%</span>'
 
     # 序号圆标
     rank_badge = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;background:{color};color:#fff;border-radius:50%;font-size:11px;font-weight:bold;margin-right:6px">{rank}</span>' if rank else ''
 
-    price = f'<span style="font-weight:bold;font-size:15px;color:{color}">{d.final_price}</span>'
+    # 价格醒目放大
+    price = f'<span style="font-weight:bold;font-size:17px;color:{color}">{d.final_price}</span>'
     if d.original_price_cents > 0:
         price += f' <span style="font-size:12px;color:#999;text-decoration:line-through">{d.original_price}</span>'
 
@@ -78,7 +79,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     review = ""
     if d.review_score > 0:
         color = "#27ae60" if d.review_score >= 80 else "#e67e22" if d.review_score >= 60 else "#e74c3c"
-        review = f'<div style="font-size:12px;color:{color};margin-top:4px">👍 {d.review_score}% 好评 · {d.review_desc}</div>'
+        review = f'<div style="font-size:11px;color:{color};margin-top:4px">👍 {d.review_score}% 好评</div>'
 
     # Game header image - use WeChat CDN URL if available, skip if not uploaded
     img_url = image_map.get(d.appid)
