@@ -97,8 +97,8 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
 </div>
 </div>
 {img}
-<br/>
-</div>'''
+</div>
+<br/>'''
 
 
 class ArticleGenerator:
