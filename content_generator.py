@@ -97,6 +97,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
 </div>
 </div>
 {img}
+<br/>
 </div>'''
 
 
@@ -179,9 +180,6 @@ class ArticleGenerator:
 
         # ---- DLC 专区（若有 DLC） ----
         if dlcs:
-            # 区域分割 — 明显分隔游戏区和 DLC 区
-            parts.append('<div style="margin:32px 0 16px 0;border-top:2px dashed #ccc;text-align:center;padding-top:12px"><span style="background:#f0f0f0;color:#888;padding:4px 16px;border-radius:12px;font-size:12px;letter-spacing:1px">═══ DLC / 捆绑包专区 ═══</span></div>')
-
             # DLC 按折扣排序
             for tier_name, emoji, color, lo, hi in [
                 ("🔥 史低 DLC", "🔥", "#e74c3c", 75, 100),
