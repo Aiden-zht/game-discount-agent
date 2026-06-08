@@ -51,7 +51,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     # 价格醒目放大
     price = f'<span style="font-weight:bold;font-size:17px;color:{color}">{d.final_price}</span>'
     if d.original_price_cents > 0:
-        price += f' <span style="font-size:12px;color:#999;text-decoration:line-through">{d.original_price}</span>'
+        price += f' <span style="font-size:12px;color:#999;text-decoration:line-through;margin-left:6px">{d.original_price}</span>'
 
     # 游戏名显示格式：
     # - Palworld / 幻兽帕鲁 (Steam 原生双语)     → 保持原样
@@ -91,7 +91,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0">
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div>
-<div style="margin-bottom:4px">{rank_badge}{badge} <span style="font-weight:bold;font-size:14px">{display_name}</span></div>
+<div style="margin-bottom:4px">{rank_badge}{badge} <span style="font-weight:bold;font-size:15px">{display_name}</span></div>
 <div>{price}</div>
 {review}
 </div>
