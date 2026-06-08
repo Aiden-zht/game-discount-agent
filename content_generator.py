@@ -42,9 +42,11 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
         image_map = {}
     emoji, color, label = _discount_tag(d)
 
-    rank_badge = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;background:{color};color:#fff;border-radius:50%;font-size:11px;font-weight:bold;margin-right:6px">{rank}</span>' if rank else ''
+    # 折扣标签固定宽度，确保三个区域一致
+    badge = f'<span style="display:inline-block;background:{color};color:#fff;padding:2px 8px;border-radius:3px;font-weight:bold;font-size:12px;min-width:72px;text-align:center">{emoji} -{d.discount_percent}%</span>'
 
-    badge = f'<span style="background:{color};color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold;font-size:12px">{emoji} -{d.discount_percent}%</span>'
+    # 序号圆标
+    rank_badge = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;background:{color};color:#fff;border-radius:50%;font-size:11px;font-weight:bold;margin-right:6px">{rank}</span>' if rank else ''
 
     price = f'<span style="font-weight:bold;font-size:15px;color:{color}">{d.final_price}</span>'
     if d.original_price_cents > 0:
@@ -143,30 +145,53 @@ class ArticleGenerator:
         # Header
         parts.append(f'<h2>🎮 Steam 今日特惠</h2>')
         parts.append(f'<p style="color:#666;font-size:13px">{today_cn} · 共 {len(unique)} 款折扣</p>')
-        parts.append('<hr style="border:none;border-top:1px solid #eee;margin:12px 0"/>')
+        parts.append('<hr style="border:none;border-top:2px solid #eee;margin:12px 0"/>')
 
-        # Section: 史低专区 (≥75%)
-        tier1 = [d for d in unique if d.discount_percent >= 75]
+        # 区分游戏和 DLC
+        games = [d for d in unique if not d.is_dlc]
+        dlcs = [d for d in unique if d.is_dlc]
+
+        # ---- 游戏专区 ----
+
+        # Section: 史低 (≥75%) — 游戏
+        tier1 = [d for d in games if d.discount_percent >= 75]
         if tier1:
-            parts.append('<h3 style="color:#e74c3c">🔥 史低专区</h3>')
-            parts.append('<p style="font-size:12px;color:#999">折扣 75% 以上，历史最低价</p>')
+            parts.append('<h3 style="color:#e74c3c;margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid #e74c3c">🔥 史低专区 · 游戏</h3>')
+            parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 75% 以上，历史最低价</p>')
             for i, d in enumerate(tier1, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
 
-        # Section: 超值专区 (50-74%)
-        tier2 = [d for d in unique if 50 <= d.discount_percent < 75]
+        # Section: 超值 (50-74%) — 游戏
+        tier2 = [d for d in games if 50 <= d.discount_percent < 75]
         if tier2:
-            parts.append('<h3>⭐ 超值推荐</h3>')
-            parts.append('<p style="font-size:12px;color:#999">折扣 50% 以上，值得入手</p>')
+            parts.append('<h3 style="color:#e67e22;margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid #e67e22">⭐ 超值推荐 · 游戏</h3>')
+            parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 50% 以上，值得入手</p>')
             for i, d in enumerate(tier2, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
 
-        # Section: 其他折扣 (<50%)
-        tier3 = [d for d in unique if d.discount_percent < 50]
+        # Section: 其他 (<50%) — 游戏
+        tier3 = [d for d in games if d.discount_percent < 50]
         if tier3:
-            parts.append('<h3>💫 更多折扣</h3>')
+            parts.append('<h3 style="color:#95a5a6;margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid #95a5a6">💫 更多折扣 · 游戏</h3>')
             for i, d in enumerate(tier3, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
+
+        # ---- DLC 专区（若有 DLC） ----
+        if dlcs:
+            # 分割线
+            parts.append('<div style="margin:28px 0 8px 0;border-top:2px dashed #ddd;text-align:center;padding-top:8px"><span style="background:#f5f5f5;color:#999;padding:2px 12px;border-radius:10px;font-size:12px">🎮 扩展内容 / DLC</span></div>')
+
+            # DLC 按折扣排序
+            for tier_name, emoji, color, lo, hi in [
+                ("🔥 史低 DLC", "🔥", "#e74c3c", 75, 100),
+                ("⭐ 超值 DLC", "⭐", "#e67e22", 50, 74),
+                ("💫 更多 DLC", "💫", "#95a5a6", 0, 49),
+            ]:
+                tier = [d for d in dlcs if lo <= d.discount_percent <= hi]
+                if tier:
+                    parts.append(f'<h4 style="color:{color};margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid {color}">{tier_name}</h4>')
+                    for i, d in enumerate(tier, 1):
+                        parts.append(_game_card(d, rank=i, image_map=image_map))
 
         # Epic free section
         if epic_free:
