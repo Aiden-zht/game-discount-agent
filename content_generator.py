@@ -58,11 +58,11 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     else:
         display_name = en_name or d.name
 
-    # Review score (if available from API)
+    # Review score (from appreviews API)
     review = ""
     if d.review_score > 0:
-        stars = "🌟🌟🌟" if d.review_score >= 90 else "🌟🌟" if d.review_score >= 70 else "🌟"
-        review = f'<div style="font-size:12px;color:#27ae60;margin-top:4px">{stars} {d.review_desc}</div>'
+        color = "#27ae60" if d.review_score >= 80 else "#e67e22" if d.review_score >= 60 else "#e74c3c"
+        review = f'<div style="font-size:12px;color:{color};margin-top:4px">👍 {d.review_score}% 好评 · {d.review_desc}</div>'
 
     # Game header image - use WeChat CDN URL if available
     img_url = image_map.get(d.appid, f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{d.appid}/header.jpg")

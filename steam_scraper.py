@@ -162,14 +162,18 @@ class SteamScraper:
             items = data.get("specials", {}).get("items", [])
             deals = [self._api_item_to_deal(item) for item in items]
 
-            # 并行查询 appdetails 获取双语名（最准确）
+            # 并行查询 appdetails + appreviews 获取双语名和好评率
             appids = [d.appid for d in deals if d.appid]
             if appids:
                 bilingual = self._fetch_bilingual_names(appids)
                 for d in deals:
                     if d.appid in bilingual:
-                        d.name_en = bilingual[d.appid]["en"]
-                        d.name_cn = bilingual[d.appid]["cn"]
+                        info = bilingual[d.appid]
+                        d.name_en = info["en"]
+                        d.name_cn = info["cn"]
+                        if info["review_score"] > 0:
+                            d.review_score = info["review_score"]
+                            d.review_desc = info["review_desc"]
 
             return deals
         except httpx.HTTPStatusError as e:
@@ -183,21 +187,37 @@ class SteamScraper:
             return []
 
     def _fetch_bilingual_names(self, appids: list[int]) -> dict[int, dict]:
-        """并行查询 appdetails 获取双语名，返回 {appid: {en:..., cn:...}}"""
+        """并行查询 appdetails + appreviews，返回 {appid: {en, cn, review_score, review_desc}}"""
         import concurrent.futures
 
+        REVIEW_URL = "https://store.steampowered.com/appreviews"
+
         def _get(appid: int) -> dict:
+            info = {"en": "", "cn": "", "review_score": 0, "review_desc": ""}
             try:
                 url = f"{self.API_BASE}/appdetails"
                 r = self._client.get(url, params={"appids": appid, "l": "schinese"})
-                cn = r.json().get(str(appid), {}).get("data", {}).get("name", "")
+                detail = r.json().get(str(appid), {}).get("data", {})
+                info["cn"] = detail.get("name", "")
 
                 r = self._client.get(url, params={"appids": appid, "l": "english"})
-                en = r.json().get(str(appid), {}).get("data", {}).get("name", "")
+                info["en"] = r.json().get(str(appid), {}).get("data", {}).get("name", "")
 
-                return {appid: {"en": en, "cn": cn}}
+                # 同时获取好评率（appreviews API 才有准确数据）
+                rr = self._client.get(
+                    f"{REVIEW_URL}/{appid}",
+                    params={"json": 1, "language": "english", "filter": "summary"},
+                )
+                qs = rr.json().get("query_summary", {})
+                total = qs.get("total_reviews", 0)
+                pos = qs.get("total_positive", 0)
+                if total > 0:
+                    info["review_score"] = round(pos / total * 100)
+                    info["review_desc"] = qs.get("review_score_desc", "")
+
+                return {appid: info}
             except Exception:
-                return {appid: {"en": "", "cn": ""}}
+                return {appid: info}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(_get, appids))
