@@ -9,6 +9,7 @@ game-discount-agent/
 ├── steam_scraper.py      # Steam 折扣爬虫
 ├── epic_scraper.py       # Epic 免费游戏爬虫
 ├── content_generator.py  # AI 文章生成器（DeepSeek API / 模板备选）
+├── wechat_publisher.py   # 公众号自动发布模块
 ├── cron_digest.py        # 每日流水线入口
 ├── requirements.txt      # 依赖
 ├── output/               # 生成的文章存储
@@ -44,11 +45,21 @@ hermes cron create \
 |------|------|------|
 | `DEEPSEEK_API_KEY` | 否 | DeepSeek API Key，不填则使用模板模式 |
 
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `DEEPSEEK_API_KEY` | 否 | DeepSeek API Key，不填则使用模板模式 |
+| `WECHAT_APPID` | 否 | 公众号 AppID，填了才会自动发布 |
+| `WECHAT_APPSECRET` | 否 | 公众号 AppSecret |
+
 ## 公众号集成
 
-文章生成后存储在 `output/` 目录，格式为 markdown。
+文章生成后会自动尝试发布到公众号（流程：创建草稿 → 发布草稿）。
 
-- 有 API Key：AI 写文，风格接地气带幽默
-- 无 API Key：模板模式，纯数据展示
+### 首次使用前
 
-后续可接入公众号自动发布（需 AppID + AppSecret）。
+1. 注册公众号 [mp.weixin.qq.com](https://mp.weixin.qq.com)，个人免费
+2. 在 开发 → 基本配置 中获取 AppID + AppSecret
+3. **IP 白名单**：将服务器外网 IP 添加到 基本配置 → IP白名单
+4. 配置环境变量 `WECHAT_APPID` + `WECHAT_APPSECRET`
+
+之后每天 10:00 自动爬取 → 生成文章 → 发布到公众号，全程无人值守。

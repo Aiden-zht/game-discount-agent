@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from steam_scraper import SteamScraper
 from epic_scraper import EpicScraper
 from content_generator import ArticleGenerator
+from wechat_publisher import publish_article, Article as WeChatArticle, WeChatError, get_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,38 @@ def run_daily_digest() -> str:
             f.write(free_alert)
         logger.info(f"免费提醒已保存: {alert_path}")
 
-    # ---- Step 6: 生成统计摘要（供 cron return） ----
+    # ---- Step 6: 推送到公众号 ----
+    wechat_published = False
+    wechat_error = ""
+    try:
+        # 检查凭证是否配置
+        get_access_token()  # 未配置或 IP 未加白时会抛出
+
+        wc_article = WeChatArticle(
+            title=f"🎮 今日游戏好价 | {datetime.now().strftime('%m月%d日')}",
+            content=article,
+            author="游戏好价Agent",
+            digest=f"Steam {len(steam_deals)}个折扣 · Epic {len(epic_free)}个免费" if steam_deals or epic_free else "今日游戏好价速览",
+        )
+
+        result = publish_article(wc_article)
+        if result.success:
+            wechat_published = True
+            logger.info(f"✅ 公众号已发布: publish_id={result.publish_id}")
+        else:
+            wechat_error = result.error or "未知错误"
+            logger.warning(f"❌ 公众号发布失败: {wechat_error}")
+    except WeChatError as e:
+        wechat_error = str(e)
+        if "not in whitelist" in str(e):
+            logger.warning("⚠️ 公众号 IP 白名单未配置，跳过发布")
+        else:
+            logger.warning(f"⚠️ 公众号发布跳过: {e}")
+    except Exception as e:
+        wechat_error = str(e)
+        logger.warning(f"⚠️ 公众号发布异常: {e}")
+
+    # ---- Step 7: 生成统计摘要（供 cron return） ----
     summary = (
         f"📊 游戏折扣日报 | {datetime.now().strftime('%Y-%m-%d')}\n"
         f"\n"
@@ -91,6 +123,11 @@ def run_daily_digest() -> str:
             summary += f"  🆓 {d.name}\n"
 
     summary += f"\n📝 文章已生成: {digest_path}"
+
+    if wechat_published:
+        summary += f"\n✅ 公众号已发布"
+    elif wechat_error:
+        summary += f"\n❌ 公众号发布失败: {wechat_error[:60]}"
 
     return summary
 
