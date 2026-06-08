@@ -50,10 +50,13 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     if d.original_price_cents > 0:
         price += f' <span style="font-size:12px;color:#999;text-decoration:line-through">{d.original_price}</span>'
 
-    # Bilingual name format
-    display_name = d.name
-    if d.name_en and d.name_en != d.name:
-        display_name = f"{d.name_en} / {d.name}"
+    # 双语名: "English / 简体中文"
+    en_name = d.name_en or d.name
+    cn_name = d.name_cn or d.name
+    if en_name and cn_name and en_name != cn_name:
+        display_name = f"{en_name} / {cn_name}"
+    else:
+        display_name = en_name or d.name
 
     # Review score (if available from API)
     review = ""

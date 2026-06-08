@@ -35,6 +35,7 @@ class GameDeal:
     appid: int
     name: str
     name_en: str = ""
+    name_cn: str = ""
     original_price_cents: int = 0
     final_price_cents: int = 0
     discount_percent: int = 0
@@ -155,17 +156,20 @@ class SteamScraper:
     # ------------------------------------------------------------------
 
     def get_deals(self) -> list[GameDeal]:
-        """获取 Steam 当前特惠游戏（含英文名）"""
+        """获取 Steam 当前特惠游戏（带英文+中文双语名）"""
         try:
             data = self._fetch_featured()
             items = data.get("specials", {}).get("items", [])
             deals = [self._api_item_to_deal(item) for item in items]
 
-            # 叠加英文名
-            en_names = self._fetch_en_names()
-            for d in deals:
-                if d.appid in en_names and en_names[d.appid] != d.name:
-                    d.name_en = en_names[d.appid]
+            # 并行查询 appdetails 获取双语名（最准确）
+            appids = [d.appid for d in deals if d.appid]
+            if appids:
+                bilingual = self._fetch_bilingual_names(appids)
+                for d in deals:
+                    if d.appid in bilingual:
+                        d.name_en = bilingual[d.appid]["en"]
+                        d.name_cn = bilingual[d.appid]["cn"]
 
             return deals
         except httpx.HTTPStatusError as e:
@@ -177,6 +181,31 @@ class SteamScraper:
         except (KeyError, TypeError, json.JSONDecodeError) as e:
             logger.error(f"Steam API 数据解析异常: {e}")
             return []
+
+    def _fetch_bilingual_names(self, appids: list[int]) -> dict[int, dict]:
+        """并行查询 appdetails 获取双语名，返回 {appid: {en:..., cn:...}}"""
+        import concurrent.futures
+
+        def _get(appid: int) -> dict:
+            try:
+                url = f"{self.API_BASE}/appdetails"
+                r = self._client.get(url, params={"appids": appid, "l": "schinese"})
+                cn = r.json().get(str(appid), {}).get("data", {}).get("name", "")
+
+                r = self._client.get(url, params={"appids": appid, "l": "english"})
+                en = r.json().get(str(appid), {}).get("data", {}).get("name", "")
+
+                return {appid: {"en": en, "cn": cn}}
+            except Exception:
+                return {appid: {"en": "", "cn": ""}}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(_get, appids))
+
+        merged = {}
+        for r in results:
+            merged.update(r)
+        return merged
 
     def get_top_sellers(self) -> list[GameDeal]:
         """获取 Steam 热销榜"""
