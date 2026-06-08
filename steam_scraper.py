@@ -172,6 +172,8 @@ class SteamScraper:
                         info = bilingual[d.appid]
                         d.name_en = info["en"]
                         d.name_cn = info["cn"]
+                        if info["header_image"]:
+                            d.header_image = info["header_image"]
                         if info["review_score"] > 0:
                             d.review_score = info["review_score"]
                             d.review_desc = info["review_desc"]
@@ -273,12 +275,13 @@ class SteamScraper:
         REVIEW_URL = "https://store.steampowered.com/appreviews"
 
         def _get(appid: int) -> dict:
-            info = {"en": "", "cn": "", "review_score": 0, "review_desc": ""}
+            info = {"en": "", "cn": "", "review_score": 0, "review_desc": "", "header_image": ""}
             try:
                 url = f"{self.API_BASE}/appdetails"
                 r = self._client.get(url, params={"appids": appid, "l": "schinese"})
                 detail = r.json().get(str(appid), {}).get("data", {})
                 info["cn"] = detail.get("name", "")
+                info["header_image"] = detail.get("header_image", "")
 
                 r = self._client.get(url, params={"appids": appid, "l": "english"})
                 info["en"] = r.json().get(str(appid), {}).get("data", {}).get("name", "")

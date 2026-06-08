@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Upload game header images to WeChat permanent material."""
+"""Upload game header images to WeChat permanent material / fallback parent image."""
 
 import http.client
 import json
 import logging
 import os
-import tempfile
 import time
 from typing import Optional
 from steam_scraper import GameDeal
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# DLC/Bundle → 母游戏 appid 映射（这些 appid 无独立 store 页面，用母游戏封面）
+PARENT_APPID_MAP: dict[int, int] = {
+    736589: 268910,    # Cuphead - The Delicious Last Course → Cuphead
+    1313468: 1364780,  # Street Fighter 6 Years 1-2 Fighters Edition → SF6
+}
 
 
 class WeChatImageUploader:
@@ -31,7 +36,6 @@ class WeChatImageUploader:
         return self._http
 
     def _download_image(self, url: str) -> bytes:
-        """Download image from URL (e.g. Steam CDN)."""
         resp = self._get_http().get(url)
         resp.raise_for_status()
         return resp.content
@@ -66,43 +70,71 @@ class WeChatImageUploader:
         else:
             raise RuntimeError(f"WeChat upload failed: {data}")
 
+    def _try_download(self, appid: int, label: str) -> bytes | None:
+        """尝试下载封面图：header.jpg → capsule_231x87.jpg"""
+        urls = [
+            f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
+            f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_231x87.jpg",
+        ]
+        for url, fmt in zip(urls, ["header", "capsule"]):
+            try:
+                data = self._download_image(url)
+                logger.info(f"  ✅ {fmt} OK ({len(data)} bytes)")
+                return data
+            except Exception:
+                logger.info(f"  {fmt} 404, trying next...")
+        return None
+
     def process_game_images(
         self, games: list[GameDeal], token: str
     ) -> dict[int, str]:
-        """Batch download+upload game header images. Returns {appid: wechat_url}."""
+        """Batch download+upload game header images. Returns {appid: wechat_url}.
+
+        URL 优先级：
+        1. appdetails 提供的 header_image（CDN 带 hash，最准）
+        2. 裸 URL patterns（header.jpg → capsule）
+        3. PARENT_APPID_MAP → 母游戏封面（仅 DLC/Bundle）
+        """
         results = {}
         for i, g in enumerate(games):
             if g.appid in self._cache:
                 results[g.appid] = self._cache[g.appid]
                 continue
 
-            # Steam header image (most reliable format)
-            url = f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{g.appid}/header.jpg"
+            label = f"{g.name_en or g.name}" + (f" / {g.name_cn}" if g.name_cn else "")
+            logger.info(f"Downloading [{i+1}/{len(games)}] {label}...")
 
-            try:
-                logger.info(f"Downloading [{i+1}/{len(games)}] {g.name}...")
-                img_data = self._download_image(url)
-                logger.info(f"  {len(img_data)} bytes, uploading to WeChat...")
-                wechat_url = self._upload_to_wechat(img_data, token)
-                self._cache[g.appid] = wechat_url
-                results[g.appid] = wechat_url
-                logger.info(f"  ✅ WeChat CDN: {wechat_url[:40]}...")
-            except Exception as e:
-                # Try smaller capsule format as fallback
+            img_data = None
+
+            # 1) appdetails 带 hash 的 header_image URL
+            if g.header_image:
                 try:
-                    alt_url = f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{g.appid}/capsule_231x87.jpg"
-                    logger.info(f"  Retrying with capsule format for {g.name}...")
-                    img_data = self._download_image(alt_url)
+                    img_data = self._download_image(g.header_image)
+                    logger.info(f"  ✅ appdetails URL ({len(img_data)} bytes)")
+                except Exception:
+                    logger.info(f"  appdetails URL failed, falling back...")
+
+            # 2) 裸 URL
+            if img_data is None:
+                img_data = self._try_download(g.appid, label)
+
+            # 3) DLC/Bundle → 母游戏
+            if img_data is None and g.appid in PARENT_APPID_MAP:
+                parent_id = PARENT_APPID_MAP[g.appid]
+                logger.info(f"  → 用母游戏 appid {parent_id}")
+                img_data = self._try_download(parent_id, f"{label} (parent)")
+
+            if img_data is not None:
+                try:
                     wechat_url = self._upload_to_wechat(img_data, token)
                     self._cache[g.appid] = wechat_url
                     results[g.appid] = wechat_url
-                    logger.info(f"  ✅ WeChat CDN (capsule): {wechat_url[:40]}...")
-                except Exception as e2:
-                    logger.warning(f"  ❌ {g.name}: header.jpg + capsule both failed")
-                    # 不移入 image_map，让 content_generator 显示占位符
-                    continue
+                    logger.info(f"  ✅ WeChat CDN: {wechat_url[:40]}...")
+                except Exception as e:
+                    logger.warning(f"  ❌ WeChat upload failed: {e}")
+            else:
+                logger.warning(f"  ❌ {label}: all attempts failed, placeholder will be used")
 
-            # Small delay to avoid rate limits (WeChat: 500/day)
             if i < len(games) - 1:
                 time.sleep(0.5)
 

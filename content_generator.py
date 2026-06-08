@@ -61,8 +61,8 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
         # Already bilingual from Steam (e.g. "Palworld / 幻兽帕鲁")
         display_name = cn_name
     elif getattr(d, "_translated", False) and cn_name and cn_name != en_name:
-        # AI-translated: show original with Chinese in brackets
-        display_name = f"{en_name} [{cn_name}]"
+        # Translated: same / format
+        display_name = f"{en_name} / {cn_name}"
     elif en_name and cn_name and en_name != cn_name:
         display_name = f"{en_name} / {cn_name}"
     else:
