@@ -73,6 +73,78 @@ class PublishResult:
     error: Optional[str] = None
 
 
+def upload_image_thumb(client: httpx.Client, token: str, image_url: str) -> str:
+    """Download an image URL, crop to 300x200, upload as permanent thumb.
+    Returns thumb_media_id.
+    """
+    from PIL import Image
+    import io
+    import httpx as _httpx
+
+    # Download
+    resp = _httpx.get(image_url, timeout=30, follow_redirects=True)
+    resp.raise_for_status()
+    img_bytes = resp.content
+
+    # Resize to 300x200 center crop
+    img = Image.open(io.BytesIO(img_bytes))
+    # Calculate center crop
+    w, h = img.size
+    target_ratio = 300 / 200  # 1.5
+    current_ratio = w / h
+
+    if current_ratio > target_ratio:
+        # Too wide: crop width
+        new_w = int(h * target_ratio)
+        offset = (w - new_w) // 2
+        img = img.crop((offset, 0, offset + new_w, h))
+    elif current_ratio < target_ratio:
+        # Too tall: crop height
+        new_h = int(w / target_ratio)
+        offset = (h - new_h) // 2
+        img = img.crop((0, offset, w, offset + new_h))
+
+    img = img.resize((300, 200), Image.LANCZOS)
+
+    # Save to PNG bytes
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    # Upload as permanent thumb
+    return _upload_material(client, token, png_bytes, "thumb_cover.png", "image/png")
+
+
+
+def _upload_material(client: httpx.Client, token: str, file_bytes: bytes, filename: str, content_type: str) -> str:
+    """Upload a file as permanent material, return media_id."""
+    url = f"{MATERIAL_ADD_URL}?access_token={token}&type=thumb"
+    boundary = "----FormBoundary7MA4YWxkTrZu0gW"
+    body_parts = []
+    for line in [
+        f"--{boundary}\r\n",
+        f'Content-Disposition: form-data; name="media"; filename="{filename}"\r\n',
+        f"Content-Type: {content_type}\r\n",
+        "\r\n",
+    ]:
+        body_parts.append(line.encode())
+    body_parts.append(file_bytes)
+    body_parts.append(f"\r\n--{boundary}--\r\n".encode())
+    body = b"".join(body_parts)
+
+    resp = client.post(
+        url,
+        content=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "media_id" in data:
+        logger.info(f"✅ Thumb uploaded: {data['media_id'][:20]}...")
+        return data["media_id"]
+    raise WeChatError(data.get("errcode", -1), data.get("errmsg", "Upload failed"))
+
+
 def _make_thumb_png() -> bytes:
     """Create a 300x200 dark-themed PNG thumbnail for articles."""
     w, h = 300, 200
