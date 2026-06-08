@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 RETRY_MAX = 3
 RETRY_BACKOFF = 2.0  # 每次翻倍
 
+# DLC/Bundle → 母游戏 appid 映射
+PARENT_APPID_MAP: dict[int, int] = {
+    736589: 268910,    # Cuphead - The Delicious Last Course → Cuphead
+    1313468: 1364780,  # Street Fighter 6 Years 1-2 Fighters Edition → SF6
+    692569: 1446780,   # MONSTER HUNTER RISE + SUNBREAK 组合包 → Monster Hunter Rise
+}
+
 
 @dataclass
 class GameDeal:
@@ -42,6 +49,7 @@ class GameDeal:
     currency: str = "CNY"
     review_score: int = 0
     review_desc: str = ""
+    is_dlc: bool = False
     header_image: str = ""
     store_url: str = ""
     source: str = "steam"  # steam / steam_free
@@ -256,6 +264,14 @@ class SteamScraper:
                     if en in FALLBACK_TRANSLATIONS:
                         d.name_cn = FALLBACK_TRANSLATIONS[en]
                         d._translated = True
+
+            # 标记 DLC/Bundle（type=1 表示 Bundle/DLC、
+            # PARENT_APPID_MAP 作为兜底）
+            items = data.get("specials", {}).get("items", [])
+            type_map = {item["id"]: item.get("type", 0) for item in items if "id" in item}
+            for d in deals:
+                if type_map.get(d.appid) == 1 or d.appid in PARENT_APPID_MAP:
+                    d.is_dlc = True
 
             return deals
         except httpx.HTTPStatusError as e:

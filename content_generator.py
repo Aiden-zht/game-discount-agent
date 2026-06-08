@@ -68,6 +68,10 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     else:
         display_name = en_name or d.name
 
+    # DLC/Bundle 标注
+    dlc_tag = ' <span style="font-size:11px;color:#e67e22;font-weight:normal;background:#fef3e2;padding:1px 5px;border-radius:3px">DLC</span>' if d.is_dlc else ''
+    display_name = f"{display_name}{dlc_tag}"
+
     # Review score (from appreviews API)
     review = ""
     if d.review_score > 0:

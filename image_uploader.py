@@ -7,16 +7,10 @@ import logging
 import os
 import time
 from typing import Optional
-from steam_scraper import GameDeal
+from steam_scraper import GameDeal, PARENT_APPID_MAP
 import httpx
 
 logger = logging.getLogger(__name__)
-
-# DLC/Bundle → 母游戏 appid 映射（这些 appid 无独立 store 页面，用母游戏封面）
-PARENT_APPID_MAP: dict[int, int] = {
-    736589: 268910,    # Cuphead - The Delicious Last Course → Cuphead
-    1313468: 1364780,  # Street Fighter 6 Years 1-2 Fighters Edition → SF6
-}
 
 
 class WeChatImageUploader:
