@@ -88,7 +88,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     else:
         img = '<div style="width:100%;max-width:460px;height:48px;background:#f9f9f9;border-radius:6px;margin:8px 0 0 0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#bbb">🎮 Steam</div>'
 
-    return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0">
+    return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0 24px 0">
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div>
 <div style="margin-bottom:4px">{rank_badge}{badge} <span style="font-weight:bold;font-size:15px">{display_name}</span></div>
@@ -179,8 +179,8 @@ class ArticleGenerator:
 
         # ---- DLC 专区（若有 DLC） ----
         if dlcs:
-            # 分割线
-            parts.append('<div style="margin:28px 0 8px 0;border-top:2px dashed #ddd;text-align:center;padding-top:8px"><span style="background:#f5f5f5;color:#999;padding:2px 12px;border-radius:10px;font-size:12px">🎮 扩展内容 / DLC</span></div>')
+            # 区域分割 — 明显分隔游戏区和 DLC 区
+            parts.append('<div style="margin:32px 0 16px 0;border-top:2px dashed #ccc;text-align:center;padding-top:12px"><span style="background:#f0f0f0;color:#888;padding:4px 16px;border-radius:12px;font-size:12px;letter-spacing:1px">═══ DLC / 捆绑包专区 ═══</span></div>')
 
             # DLC 按折扣排序
             for tier_name, emoji, color, lo, hi in [
