@@ -50,10 +50,20 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     if d.original_price_cents > 0:
         price += f' <span style="font-size:12px;color:#999;text-decoration:line-through">{d.original_price}</span>'
 
-    # 双语名: "English / 简体中文"
+    # 游戏名显示格式：
+    # - Palworld / 幻兽帕鲁 (Steam 原生双语)     → 保持原样
+    # - Resident Evil 4 / 生化危机4 (API 有中文名) → en / cn
+    # - Escape the Backrooms [逃离密室] (翻译的)    → en [cn]
+    # - Cuphead & The Delicious Last Course          → 仅英文
     en_name = d.name_en or d.name
     cn_name = d.name_cn or d.name
-    if en_name and cn_name and en_name != cn_name:
+    if cn_name and " / " in cn_name:
+        # Already bilingual from Steam (e.g. "Palworld / 幻兽帕鲁")
+        display_name = cn_name
+    elif getattr(d, "_translated", False) and cn_name and cn_name != en_name:
+        # AI-translated: show original with Chinese in brackets
+        display_name = f"{en_name} [{cn_name}]"
+    elif en_name and cn_name and en_name != cn_name:
         display_name = f"{en_name} / {cn_name}"
     else:
         display_name = en_name or d.name
@@ -64,9 +74,12 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
         color = "#27ae60" if d.review_score >= 80 else "#e67e22" if d.review_score >= 60 else "#e74c3c"
         review = f'<div style="font-size:12px;color:{color};margin-top:4px">👍 {d.review_score}% 好评 · {d.review_desc}</div>'
 
-    # Game header image - use WeChat CDN URL if available
-    img_url = image_map.get(d.appid, f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{d.appid}/header.jpg")
-    img = f'<img src="{img_url}" style="width:100%;max-width:460px;border-radius:6px;margin:8px 0 0 0"/>'
+    # Game header image - use WeChat CDN URL if available, skip if not uploaded
+    img_url = image_map.get(d.appid)
+    if img_url:
+        img = f'<img src="{img_url}" style="width:100%;max-width:460px;border-radius:6px;margin:8px 0 0 0"/>'
+    else:
+        img = '<div style="width:100%;max-width:460px;height:48px;background:#f9f9f9;border-radius:6px;margin:8px 0 0 0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#bbb">🎮 Steam</div>'
 
     return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0">
 <div style="display:flex;justify-content:space-between;align-items:center">

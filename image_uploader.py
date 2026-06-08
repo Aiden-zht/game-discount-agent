@@ -99,8 +99,8 @@ class WeChatImageUploader:
                     logger.info(f"  ✅ WeChat CDN (capsule): {wechat_url[:40]}...")
                 except Exception as e2:
                     logger.warning(f"  ❌ {g.name}: header.jpg + capsule both failed")
-                    # Use Steam direct URL as fallback
-                    results[g.appid] = url
+                    # 不移入 image_map，让 content_generator 显示占位符
+                    continue
 
             # Small delay to avoid rate limits (WeChat: 500/day)
             if i < len(games) - 1:

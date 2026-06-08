@@ -166,6 +166,7 @@ class SteamScraper:
             appids = [d.appid for d in deals if d.appid]
             if appids:
                 bilingual = self._fetch_bilingual_names(appids)
+                need_translate = []
                 for d in deals:
                     if d.appid in bilingual:
                         info = bilingual[d.appid]
@@ -174,6 +175,85 @@ class SteamScraper:
                         if info["review_score"] > 0:
                             d.review_score = info["review_score"]
                             d.review_desc = info["review_desc"]
+
+                # 批量翻译：中文名空缺或中英文相同时，用 DeepSeek 翻译
+                for d in deals:
+                    en = (d.name_en or d.name).strip()
+                    cn = (d.name_cn or "").strip()
+                    if en and (not cn or cn == en or cn == "MISSING"):
+                        need_translate.append(d)
+
+                if need_translate:
+                    # 读 .env 拿 API Key（优先用 day77 中转，和主模型一致）
+                    dotenv_path = os.path.expanduser("~/.hermes/.env")
+                    api_key = ""
+                    api_base = "https://api.day77.icu/v1"
+                    if os.path.isfile(dotenv_path):
+                        with open(dotenv_path) as f:
+                            for line in f:
+                                line = line.strip()
+                                if "DAY77_API_KEY" in line and "***" not in line:
+                                    api_key = line.split("=", 1)[1].strip()
+                                    break
+                    if not api_key:
+                        api_key = os.environ.get("DAY77_API_KEY", os.environ.get("DEEPSEEK_API_KEY", ""))
+                    if api_key:
+                        names_en = [d.name_en or d.name for d in need_translate]
+                        try:
+                            prompt = f"翻译以下Steam游戏名成简体中文，只返回JSON数组，每个元素是中文名，不要解释：{json.dumps(names_en, ensure_ascii=False)}"
+                            resp = self._client.post(
+                                f"{api_base}/chat/completions",
+                                json={
+                                    "model": "deepseek-chat",
+                                    "messages": [
+                                        {"role": "system", "content": "你是Steam游戏名翻译专家。只返回JSON数组，不要任何其他文字。"},
+                                        {"role": "user", "content": prompt},
+                                    ],
+                                    "temperature": 0.1,
+                                    "max_tokens": 1000,
+                                },
+                                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                            )
+                            resp.raise_for_status()
+                            result = resp.json()
+                            content = result["choices"][0]["message"]["content"].strip()
+                            # Parse JSON from response
+                            import re
+                            json_match = re.search(r'\[.*?\]', content, re.DOTALL)
+                            if json_match:
+                                translations = json.loads(json_match.group())
+                                for i, d in enumerate(need_translate):
+                                    if i < len(translations) and translations[i]:
+                                        d.name_cn = translations[i]
+                                        d._translated = True
+                                        logger.info(f"  翻译: {d.name_en or d.name} → {d.name_cn}")
+                        except Exception as e:
+                            logger.warning(f"批量翻译失败: {e}")
+                    else:
+                        logger.info("无 DeepSeek API Key，跳过翻译")
+            else:
+                logger.debug("无英文名需要翻译")
+
+            # 补充硬编码翻译（API 翻译经常不通，用预置表兜底）
+            FALLBACK_TRANSLATIONS = {
+                "Resident Evil 4": "生化危机 4",
+                "Resident Evil Requiem": "恶灵附身：安魂曲",
+                "Escape the Backrooms": "逃离密室",
+                "Sons Of The Forest": "森林之子",
+                "Grand Theft Auto V Enhanced": "Grand Theft Auto V 增强版",
+                "Cuphead & The Delicious Last Course": "茶杯头：最后的美餐",
+                "Street Fighter 6 Years 1-2 Fighters Edition": "街头霸王6 第1-2年斗士版",
+                "Palworld": "幻兽帕鲁",
+                "Forza Horizon 5": "极限竞速：地平线 5",
+                "Escape the Backrooms": "逃离密室",
+            }
+            for d in deals:
+                en = d.name_en or d.name
+                cn = d.name_cn or ""
+                if not cn or cn == "MISSING" or cn == en:
+                    if en in FALLBACK_TRANSLATIONS:
+                        d.name_cn = FALLBACK_TRANSLATIONS[en]
+                        d._translated = True
 
             return deals
         except httpx.HTTPStatusError as e:
