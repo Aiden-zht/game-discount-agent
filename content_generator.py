@@ -155,7 +155,7 @@ class ArticleGenerator:
         # Section: 史低 (≥75%) — 游戏
         tier1 = [d for d in games if d.discount_percent >= 75]
         if tier1:
-            parts.append('<h3 style="color:#e74c3c;margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e74c3c">🔥 史低专区 · 游戏</h3>')
+            parts.append('<h3 style="color:#e74c3c;margin:16px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e74c3c">🔥 史低专区 · 游戏</h3>')
             parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 75% 以上，历史最低价</p>')
             for i, d in enumerate(tier1, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
