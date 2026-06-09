@@ -129,7 +129,7 @@ class EpicScraper:
                             fetched_at=datetime.now(timezone.utc).isoformat(),
                         ))
         except Exception as e:
-            logger.debug(f"解析 Epic __NEXT_DATA__ 失败: {e}")
+            logger.warning(f"解析 Epic __NEXT_DATA__ 失败: {e}")
 
         return deals
 

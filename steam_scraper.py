@@ -238,9 +238,43 @@ class SteamScraper:
                                         d._translated = True
                                         logger.info(f"  翻译: {d.name_en or d.name} → {d.name_cn}")
                         except Exception as e:
-                            logger.warning(f"批量翻译失败: {e}")
+                            logger.warning(f"翻译API失败 ({api_base}), 尝试讯飞备选: {e}")
+                            # 讯飞备选翻译
+                            try:
+                                xf_url = "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+                                xf_headers = {"Authorization": "Bearer apikey:secret"}
+                                resp2 = self._client.post(
+                                    f"{xf_url}/chat/completions",
+                                    json={
+                                        "model": "xopqwen36v35b",
+                                        "messages": [
+                                            {"role": "system", "content": "你是Steam游戏名翻译专家。只返回JSON数组，不要任何其他文字。"},
+                                            {"role": "user", "content": prompt},
+                                        ],
+                                        "temperature": 0.1,
+                                        "max_tokens": 1000,
+                                    },
+                                    headers=xf_headers,
+                                    timeout=15,
+                                )
+                                resp2.raise_for_status()
+                                result2 = resp2.json()
+                                content2 = result2["choices"][0]["message"]["content"].strip()
+                                import re
+                                json_match2 = re.search(r'\[.*?\]', content2, re.DOTALL)
+                                if json_match2:
+                                    translations = json.loads(json_match2.group())
+                                    for i, d in enumerate(need_translate):
+                                        if i < len(translations) and translations[i]:
+                                            d.name_cn = translations[i]
+                                            d._translated = True
+                                            logger.info(f"  翻译(讯飞): {d.name_en or d.name} → {d.name_cn}")
+                                else:
+                                    logger.warning(f"讯飞翻译返回格式异常，回退到兜底表")
+                            except Exception as e2:
+                                logger.warning(f"讯飞翻译也失败 ({e2})，使用兜底表")
                     else:
-                        logger.info("无 DeepSeek API Key，跳过翻译")
+                        logger.info("无 API Key，使用兜底表翻译")
             else:
                 logger.debug("无英文名需要翻译")
 
@@ -255,7 +289,8 @@ class SteamScraper:
                 "Street Fighter 6 Years 1-2 Fighters Edition": "街头霸王6 第1-2年斗士版",
                 "Palworld": "幻兽帕鲁",
                 "Forza Horizon 5": "极限竞速：地平线 5",
-                "Escape the Backrooms": "逃离密室",
+                "MONSTER HUNTER RISE + SUNBREAK": "怪物猎人：崛起 曙光",
+                "MONSTER HUNTER RISE + SUNBREAK 组合包": "怪物猎人：崛起 曙光",
             }
             for d in deals:
                 en = d.name_en or d.name
@@ -315,7 +350,8 @@ class SteamScraper:
                     info["review_desc"] = qs.get("review_score_desc", "")
 
                 return {appid: info}
-            except Exception:
+            except Exception as e:
+                logger.warning(f"获取双语名+好评率失败 (appid {appid}): {e}")
                 return {appid: info}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -343,98 +379,6 @@ class SteamScraper:
             return []
 
     # ------------------------------------------------------------------
-    # 搜索更多特惠（覆盖面更广的 HTML 页面）
-    # ------------------------------------------------------------------
-
-    def search_specials(self, limit: int = 30) -> list[GameDeal]:
-        """通过搜索页面获取更多特惠游戏（比 API 覆盖面更广）"""
-        from bs4 import BeautifulSoup
-
-        url = f"{self.STORE_URL}/search/"
-        params = {
-            "specials": "1",
-            "filter": "globaltopsellers",
-            "l": "schinese",
-            "cc": "CN",
-            "num_per_page": str(min(limit, 50)),
-        }
-
-        last_exc = None
-        for attempt in range(1, RETRY_MAX + 1):
-            try:
-                resp = self._client.get(url, params=params)
-                resp.raise_for_status()
-
-                soup = BeautifulSoup(resp.text, "lxml")
-                deals = []
-                for row in soup.select("a.search_result_row")[:limit]:
-                    deal = self._parse_search_row(row)
-                    if deal:
-                        deals.append(deal)
-                return deals
-
-            except (httpx.RequestError, httpx.HTTPStatusError) as e:
-                last_exc = e
-                if attempt < RETRY_MAX:
-                    wait = RETRY_BACKOFF ** attempt
-                    logger.warning(f"Steam search 第 {attempt} 次失败，{wait:.0f}s 后重试: {e}")
-                    time.sleep(wait)
-
-        logger.error(f"Steam search 重试 {RETRY_MAX} 次后仍失败: {last_exc}")
-        return []
-
-    # ------------------------------------------------------------------
-    # 免费游戏
-    # ------------------------------------------------------------------
-    def get_free_games(self) -> list[GameDeal]:
-        """获取 Steam 免费游戏（含永久免费/限免）"""
-        from bs4 import BeautifulSoup
-
-        url = f"{self.STORE_URL}/search/"
-        params = {
-            "maxprice": "free",
-            "category1": "998",
-            "l": "schinese",
-            "cc": "CN",
-        }
-
-        last_exc = None
-        for attempt in range(1, RETRY_MAX + 1):
-            try:
-                resp = self._client.get(url, params=params)
-                resp.raise_for_status()
-
-                soup = BeautifulSoup(resp.text, "lxml")
-                deals = []
-                for row in soup.select("a.search_result_row")[:10]:
-                    name_tag = row.select_one("span.title")
-                    name = name_tag.text.strip() if name_tag else ""
-                    appid_str = row.get("data-ds-appid", "0")
-                    appid = int(appid_str.split(",")[0]) if appid_str and appid_str.split(",")[0].isdigit() else 0
-
-                    if appid == 0:
-                        logger.debug(f"跳过无法解析 appid 的免费游戏: {name}")
-                        continue
-
-                    deals.append(GameDeal(
-                        appid=appid,
-                        name=name,
-                        source="steam_free",
-                        header_image=f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
-                        store_url=f"https://store.steampowered.com/app/{appid}/",
-                        fetched_at=datetime.now(timezone.utc).isoformat(),
-                    ))
-                return deals
-
-            except (httpx.RequestError, httpx.HTTPStatusError) as e:
-                last_exc = e
-                if attempt < RETRY_MAX:
-                    wait = RETRY_BACKOFF ** attempt
-                    logger.warning(f"Free games 第 {attempt} 次失败，{wait:.0f}s 后重试: {e}")
-                    time.sleep(wait)
-
-        logger.error(f"Free games 重试 {RETRY_MAX} 次后仍失败: {last_exc}")
-        return []
 
     # ------------------------------------------------------------------
     # 内部方法

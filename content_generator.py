@@ -9,8 +9,6 @@ Generates HTML articles with:
 
 import json
 import logging
-import os
-import re
 from datetime import datetime
 from typing import Optional
 import httpx
@@ -88,7 +86,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     else:
         img = '<div style="width:100%;max-width:460px;height:48px;background:#f9f9f9;border-radius:6px;margin:8px 0 0 0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#bbb">🎮 Steam</div>'
 
-    return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0 24px 0">
+    return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:8px 0 2px 0">
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div>
 <div style="margin-bottom:4px">{rank_badge}{badge} <span style="font-weight:bold;font-size:15px">{display_name}</span></div>
@@ -97,8 +95,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
 </div>
 </div>
 {img}
-</div>
-<br/>'''
+</div>'''
 
 
 class ArticleGenerator:
@@ -158,7 +155,7 @@ class ArticleGenerator:
         # Section: 史低 (≥75%) — 游戏
         tier1 = [d for d in games if d.discount_percent >= 75]
         if tier1:
-            parts.append('<h3 style="color:#e74c3c;margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid #e74c3c">🔥 史低专区 · 游戏</h3>')
+            parts.append('<h3 style="color:#e74c3c;margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e74c3c">🔥 史低专区 · 游戏</h3>')
             parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 75% 以上，历史最低价</p>')
             for i, d in enumerate(tier1, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
@@ -166,7 +163,7 @@ class ArticleGenerator:
         # Section: 超值 (50-74%) — 游戏
         tier2 = [d for d in games if 50 <= d.discount_percent < 75]
         if tier2:
-            parts.append('<h3 style="color:#e67e22;margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid #e67e22">⭐ 超值推荐 · 游戏</h3>')
+            parts.append('<h3 style="color:#e67e22;margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e67e22">⭐ 超值推荐 · 游戏</h3>')
             parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 50% 以上，值得入手</p>')
             for i, d in enumerate(tier2, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
@@ -174,7 +171,7 @@ class ArticleGenerator:
         # Section: 其他 (<50%) — 游戏
         tier3 = [d for d in games if d.discount_percent < 50]
         if tier3:
-            parts.append('<h3 style="color:#95a5a6;margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid #95a5a6">💫 更多折扣 · 游戏</h3>')
+            parts.append('<h3 style="color:#95a5a6;margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #95a5a6">💫 更多折扣 · 游戏</h3>')
             for i, d in enumerate(tier3, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
 
@@ -188,7 +185,7 @@ class ArticleGenerator:
             ]:
                 tier = [d for d in dlcs if lo <= d.discount_percent <= hi]
                 if tier:
-                    parts.append(f'<h4 style="color:{color};margin:24px 0 4px 0;padding-bottom:8px;border-bottom:3px solid {color}">{tier_name}</h4>')
+                    parts.append(f'<h4 style="color:{color};margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid {color}">{tier_name}</h4>')
                     for i, d in enumerate(tier, 1):
                         parts.append(_game_card(d, rank=i, image_map=image_map))
 

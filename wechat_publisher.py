@@ -18,10 +18,8 @@ Prerequisites:
 
 import os
 import sys
-import json
 import time
 import logging
-import http.client
 import struct
 import zlib
 from dataclasses import dataclass
@@ -408,7 +406,7 @@ def main():
     print("\n1. Getting access_token...")
     try:
         token = get_access_token()
-        print(f"   ✓ Token: {token[:10]}...")
+        print("   ✓ Token obtained")
     except WeChatError as e:
         print(f"   ✗ {e}")
         sys.exit(1)
