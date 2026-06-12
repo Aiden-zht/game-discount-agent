@@ -1,36 +1,56 @@
 #!/bin/bash
-# 游戏折扣日报 Phase 1 包装脚本
-# 检查代理可用性后运行爬虫
+# Game Discount Daily — Phase 1: Data Collection
+# Run by Hermes cron as no_agent job
+# Uses LOCAL mihomo proxy (127.0.0.1:7890 HTTP)
 
-set -e
+set -euo pipefail
 
-cd /mnt/data/daqian-ai-workshop/tools/game-discount-agent || {
-  echo "ERROR: game-discount-agent 目录不存在"
-  exit 1
-}
+WORKDIR="/mnt/data/daqian-ai-workshop/tools/game-discount-agent"
+cd "$WORKDIR" || { echo "❌ ERROR: workdir not found"; exit 1; }
 
-TODAY=$(date '+%Y%m%d')
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+TODAY=$(date '+%Y%m%d')
 
-echo "[$TIMESTAMP] === 游戏折扣日报 Phase 1 ==="
+echo "=== Phase 1: Data Collection ==="
+echo "[$TIMESTAMP] Working dir: $WORKDIR"
+echo "[$TIMESTAMP] Today: $TODAY"
 
-# 检查 SOCKS5 代理
-if curl -sI --max-time 5 --proxy socks5://127.0.0.1:7891 https://store.steampowered.com 2>/dev/null | grep -q "HTTP/"; then
-    echo "[$TIMESTAMP] SOCKS5 代理可用"
+# Check proxy
+echo "[$TIMESTAMP] Checking local proxy (127.0.0.1:7890)..."
+if curl -s --max-time 3 http://127.0.0.1:7890/status 2>/dev/null | grep -q "run"; then
+    echo "[$TIMESTAMP] ✅ Local proxy (mihomo) is running on 7890"
 else
-    echo "[$TIMESTAMP] SOCKS5 代理不可用，尝试直连..."
-    if curl -sI --max-time 5 https://store.steampowered.com 2>/dev/null | grep -q "HTTP/"; then
-        echo "[$TIMESTAMP] Steam 直连可达"
+    echo "[$TIMESTAMP] ⚠️  Local proxy check failed, trying 7891..."
+    if curl -s --max-time 3 --proxy socks5://127.0.0.1:7891 https://httpbin.org/ip 2>/dev/null | grep -q "origin"; then
+        echo "[$TIMESTAMP] ✅ SOCKS5 proxy on 7891 is working"
     else
-        echo "[$TIMESTAMP] Steam 不可达，放弃本次运行"
-        exit 1
+        echo "[$TIMESTAMP] ⚠️  Proxy unavailable, will try without proxy"
     fi
 fi
 
-# 运行 Phase 1
-python3 cron_digest.py 2>&1 || {
-    echo "[$TIMESTAMP] Phase 1 失败"
-    exit 1
-}
+# Run Phase 1 pipeline
+echo "[$TIMESTAMP] Running cron_digest.py..."
+python3 cron_digest.py 2>&1
+EXIT_CODE=$?
 
-echo "[$TIMESTAMP] === Phase 1 完成 ==="
+if [ $EXIT_CODE -eq 0 ]; then
+    # Find the state file
+    STATE_FILE=$(ls -t output/state_${TODAY}*.json 2>/dev/null | head -1)
+    HTML_FILE=$(ls -t output/digest_${TODAY}*.html 2>/dev/null | head -1)
+    
+    if [ -n "$STATE_FILE" ]; then
+        echo "✅ State file: $STATE_FILE"
+    else
+        echo "❌ No state file generated"
+        exit 1
+    fi
+    
+    if [ -n "$HTML_FILE" ]; then
+        echo "📄 HTML file: $HTML_FILE"
+    fi
+    
+    echo "=== Phase 1 Complete (success) ==="
+else
+    echo "❌ Phase 1 FAILED (exit $EXIT_CODE)"
+    exit $EXIT_CODE
+fi

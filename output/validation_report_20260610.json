@@ -1,0 +1,18 @@
+[
+  {
+    "severity": "WARNING",
+    "type": "image_consistency",
+    "appid": null,
+    "game": null,
+    "issue": "前3款游戏（RE4/森林之子/地平线5）使用占位符，后6款使用实际图片。同一分区内应统一风格。",
+    "suggested_fix": "确认3款无图游戏的图片上传是否失败，或接受此降级方案"
+  },
+  {
+    "severity": "INFO",
+    "type": "dlc_bundle",
+    "appid": 736589,
+    "game": "Cuphead & The Delicious Last Course",
+    "issue": "AppID 736589 是Cuphead Bundle包ID而非独立DLC AppID，Steam API返回success:false。但featuredcategories API返回了此包的数据，数据合理。",
+    "suggested_fix": "此为featuredcategories的bundle特性，可接受"
+  }
+]

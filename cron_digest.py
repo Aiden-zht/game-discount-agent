@@ -8,12 +8,17 @@ uploads cover thumb. Saves all state to JSON for Phase 2 validation + publish.
 import json
 import logging
 import os
+import random
 import sys
 from datetime import datetime
 
-# Ensure proxy is set
-os.environ.setdefault("HTTP_PROXY", "http://192.168.0.196:7890")
-os.environ.setdefault("HTTPS_PROXY", "http://192.168.0.196:7890")
+# Steam API 翻墙走本地 mihomo SOCKS5，微信 API 直连走代理=0（不通代理）
+# ⚠️ 绝对不能设全局 HTTP_PROXY/HTTPS_PROXY，否则微信请求也会走代理烧钱
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("http_proxy", None)
+os.environ.pop("https_proxy", None)
+STEAM_PROXY = "socks5://127.0.0.1:7891"
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,9 +35,11 @@ logger = logging.getLogger("cron_digest")
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
 
-def _serialize_deal(d) -> dict:
+def _serialize_deal(d, image_map=None) -> dict:
     """Convert a GameDeal object to a JSON-serializable dict."""
-    return {
+    if image_map is None:
+        image_map = {}
+    result = {
         "appid": d.appid,
         "name": d.name,
         "name_en": d.name_en or "",
@@ -47,6 +54,10 @@ def _serialize_deal(d) -> dict:
         "is_dlc": d.is_dlc,
         "header_image": getattr(d, "header_image", "") or "",
     }
+    # Inject WeChat CDN cover URL if available
+    cover_url = image_map.get(d.appid, "")
+    result["cover_url"] = cover_url
+    return result
 
 
 def main():
@@ -59,8 +70,8 @@ def main():
     logger.info("=== Steam Discount Daily Digest Phase 1 ===")
     logger.info("Step 1/4: Scraping Steam deals...")
 
-    # --- Step 1: Scrape ---
-    with SteamScraper(timeout=30) as scraper:
+    # --- Step 1: Scrape (Steam needs proxy, WeChat must not) ---
+    with SteamScraper(timeout=30, proxy=STEAM_PROXY) as scraper:
         deals = scraper.get_deals()
 
     logger.info(f"Found {len(deals)} deals")
@@ -86,11 +97,20 @@ def main():
     logger.info("WeChat token obtained")
 
     image_map = {}
-    with WeChatImageUploader() as uploader:
+    with WeChatImageUploader(proxy=STEAM_PROXY) as uploader:
         image_map = uploader.process_game_images(unique, token)
 
     success_count = sum(1 for v in image_map.values() if "mmbiz.qpic.cn" in v)
     logger.info(f"Images uploaded: {success_count}/{len(unique)}")
+
+    # Filter out games with no WeChat CDN image (spec 4.3: no image = remove from recommendation)
+    no_image = [d for d in unique if d.appid not in image_map or not image_map.get(d.appid, "").strip()]
+    if no_image:
+        logger.info(f"Removing {len(no_image)} games with no image per spec 4.3:")
+        for d in no_image:
+            logger.info(f"  - {d.name} (appid {d.appid})")
+    unique = [d for d in unique if d.appid in image_map and image_map[d.appid].strip()]
+    logger.info(f"After image filter: {len(unique)} games (removed {len(no_image)})")
 
     # --- Step 3: Pick most popular game for cover thumb ---
     logger.info("Step 3/4: Uploading cover thumb...")
@@ -114,8 +134,15 @@ def main():
     # --- Step 4: Generate article HTML ---
     logger.info("Step 4/4: Generating rich article...")
 
+    # Generate a short version ID: YYMMDD + 6 random hex chars
+    # Visible in article footer for easy session/agent identification
+    today_short = datetime.now().strftime("%y%m%d")
+    rand_hex = f"{random.randint(0, 0xFFFFFF):06x}"
+    version_id = f"{today_short}-{rand_hex}"
+    logger.info(f"Version ID: V{version_id}")
+
     generator = ArticleGenerator()
-    article_html = generator.generate_daily_digest(unique, [], image_map=image_map)
+    article_html = generator.generate_daily_digest(unique, [], image_map=image_map, version_id=version_id)
 
     os.makedirs(STATE_DIR, exist_ok=True)
     today = datetime.now().strftime("%Y%m%d")
@@ -127,7 +154,7 @@ def main():
 
     # --- Save state file for Phase 2 ---
     title = f"Steam 今日特惠 {datetime.now().strftime('%m/%d')}"
-    
+
     state = {
         "generated_at": datetime.now().isoformat(),
         "article_title": title,
@@ -136,9 +163,10 @@ def main():
         "cover_appid": best.appid,
         "thumb_media_id": thumb_media_id,
         "image_map": image_map,
-        "games": [_serialize_deal(d) for d in unique],
+        "games": [_serialize_deal(d, image_map) for d in unique],
         "game_count": len(unique),
         "image_upload_count": success_count,
+        "version_id": version_id,
     }
 
     state_path = os.path.join(STATE_DIR, f"state_{today}.json")

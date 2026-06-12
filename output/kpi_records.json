@@ -1,0 +1,14 @@
+[
+  {
+    "date": "2026-06-12",
+    "run_number": 1,
+    "agent_a_score": 99,
+    "agent_b_score": 102,
+    "blocking_count": 0,
+    "warning_count": 1,
+    "published": true,
+    "media_id": "iYzIpS44irj0Fzv138qclJ0jQiGZa1ahP4-GjVmHqJi4sDASKytro7ImhUi7xASK",
+    "degraded": false,
+    "warnings_detail": ["APPID 129576: name_cn为空 (DLC特殊版本)"]
+  }
+]

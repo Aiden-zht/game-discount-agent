@@ -1,0 +1,101 @@
+{
+  "games": [
+    {
+      "appid": 413150,
+      "section": "🎮 像素冒险 · 小而美",
+      "color": "#e74c3c",
+      "en_name": "Stardew Valley",
+      "cn_name": "星露谷物语",
+      "display_name": "Stardew Valley / 星露谷物语",
+      "final_price": "¥48.0",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/413150/header.jpg?t=1754692865",
+      "short_description": "你继承了你爷爷在星露谷留下的老旧农场。带着爷爷留下的残旧工具和几枚硬币开始了你的新生活。你能适应这小镇上的生活并且将这个杂草丛生的老旧农场变成一个繁荣的家吗？",
+      "price": "¥48.0"
+    },
+    {
+      "appid": 105600,
+      "section": "🎮 像素冒险 · 小而美",
+      "color": "#e74c3c",
+      "en_name": "Terraria",
+      "cn_name": "泰拉瑞亚",
+      "display_name": "Terraria / 泰拉瑞亚",
+      "final_price": "¥42.0",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/105600/header.jpg?t=1769844435",
+      "short_description": "挖掘，战斗，探索，建造！在这个动感十足的冒险游戏里没有什么是不可能的。四人包依然可用！",
+      "price": "¥42.0"
+    },
+    {
+      "appid": 367520,
+      "section": "🎮 像素冒险 · 小而美",
+      "color": "#e74c3c",
+      "en_name": "Hollow Knight",
+      "cn_name": "空洞骑士",
+      "display_name": "Hollow Knight / 空洞骑士",
+      "final_price": "¥58.0",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/367520/3c3489495136b26b34f8a9543c7f5645b99d388c/header.jpg?t=1776125684",
+      "short_description": "在《空洞骑士》中打造属于自己的冒险之旅！穿越一个庞大却废弃的属于昆虫与英雄的王国，开启史诗般的冒险旅程。探索幽深的洞穴，与被感染的生物战斗，结识友好又奇异的昆虫，整个游戏都是经典的手绘 2D 风格。",
+      "price": "¥58.0"
+    },
+    {
+      "appid": 683320,
+      "section": "🎨 手绘风 · 治愈系",
+      "color": "#e67e22",
+      "en_name": "Gris",
+      "cn_name": "格瑞斯",
+      "display_name": "Gris / 格瑞斯",
+      "final_price": "¥58.0",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/683320/header.jpg?t=1759429603",
+      "short_description": "Gris是一个充满希望的小姑娘，她由于生活中痛苦的经历而迷失于自己的世界里。",
+      "price": "¥58.0"
+    },
+    {
+      "appid": 268910,
+      "section": "🎨 手绘风 · 治愈系",
+      "color": "#e67e22",
+      "en_name": "Cuphead",
+      "cn_name": "茶杯头",
+      "display_name": "Cuphead / 茶杯头",
+      "final_price": "¥40.8 <span style='text-decoration:line-through;color:#999'>¥68.0 -40%</span>",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/268910/header.jpg?t=1709068852",
+      "short_description": "《茶杯头》是一款以BOSS对战为主的经典横版卷轴类射击游戏。受上世纪30年代动画片的启发，游戏无论是画面还是音效都努力再现了当时的技术，如传统的赛璐璐手绘动画、水彩背景还有原声爵士乐录音等。",
+      "price": "¥40.8 <span style='text-decoration:line-through;color:#999'>¥68.0 -40%</span>"
+    },
+    {
+      "appid": 972660,
+      "section": "🎨 手绘风 · 治愈系",
+      "color": "#e67e22",
+      "en_name": "Spiritfarer",
+      "cn_name": "灵魂旅人",
+      "display_name": "Spiritfarer / 灵魂旅人",
+      "final_price": "¥108.0",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/972660/header_schinese.jpg?t=1752503178",
+      "short_description": "《Spiritfarer®》是一款关于死亡的休闲管理游戏。作为逝者的船主，建造一艘船去探索世界，关爱你的幽灵朋友，引导他们穿越神秘的海洋，最终将他们送到来世。内含疗愈心灵的本体游戏和三个主要内容更新包：探索一个更宽广的世界，结交四个全新的灵魂朋友！",
+      "price": "¥108.0"
+    },
+    {
+      "appid": 504230,
+      "section": "🕹️ 独立神作 · 必玩",
+      "color": "#27ae60",
+      "en_name": "Celeste",
+      "cn_name": "蔚蓝",
+      "display_name": "Celeste / 蔚蓝",
+      "final_price": "¥17.0 <span style='text-decoration:line-through;color:#999'>¥68.0 -75%</span>",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/504230/header.jpg?t=1714089525",
+      "short_description": "《Celeste》是《TowerFall》的制作者推出的又一力作。这款平台游戏节奏极为紧凑，玩家需要在 Madeline 攀登塞莱斯特山 (Celeste Mountain) 的旅程中，帮助她克服内心深处的恐惧。勇敢面对数百个手工打造的挑战场景，揭开诡异的秘密，解开神秘山峰的谜团吧。",
+      "price": "¥17.0 <span style='text-decoration:line-through;color:#999'>¥68.0 -75%</span>"
+    },
+    {
+      "appid": 391540,
+      "section": "🕹️ 独立神作 · 必玩",
+      "color": "#27ae60",
+      "en_name": "Undertale",
+      "cn_name": "传说之下",
+      "display_name": "Undertale / 传说之下",
+      "final_price": "¥9.0 <span style='text-decoration:line-through;color:#999'>¥36.0 -75%</span>",
+      "header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/391540/header.jpg?t=1757349115",
+      "short_description": "UNDERTALE! The RPG game where you don't have to destroy anyone.",
+      "price": "¥9.0 <span style='text-decoration:line-through;color:#999'>¥36.0 -75%</span>"
+    }
+  ],
+  "fetched_at": "2026-06-10T12:00:00"
+}

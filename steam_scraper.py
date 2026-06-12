@@ -96,9 +96,10 @@ class SteamScraper:
     API_BASE = "https://store.steampowered.com/api"
     STORE_URL = "https://store.steampowered.com"
 
-    def __init__(self, timeout: int = 15):
+    def __init__(self, timeout: int = 15, proxy: str = "socks5://127.0.0.1:7891"):
         self._client = httpx.Client(
             timeout=timeout,
+            proxy=proxy,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/json, text/html",
@@ -333,6 +334,9 @@ class SteamScraper:
                 detail = r.json().get(str(appid), {}).get("data", {})
                 info["cn"] = detail.get("name", "")
                 info["header_image"] = detail.get("header_image", "")
+                # Fallback: 如果 header_image 为空，用默认格式
+                if not info["header_image"]:
+                    info["header_image"] = f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg"
 
                 r = self._client.get(url, params={"appids": appid, "l": "english"})
                 info["en"] = r.json().get(str(appid), {}).get("data", {}).get("name", "")

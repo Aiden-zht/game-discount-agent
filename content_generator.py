@@ -79,12 +79,15 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
         color = "#27ae60" if d.review_score >= 80 else "#e67e22" if d.review_score >= 60 else "#e74c3c"
         review = f'<div style="font-size:11px;color:{color};margin-top:4px">👍 {d.review_score}% 好评</div>'
 
-    # Game header image - use WeChat CDN URL if available, skip if not uploaded
-    img_url = image_map.get(d.appid)
-    if img_url:
-        img = f'<img src="{img_url}" style="width:100%;max-width:460px;border-radius:6px;margin:8px 0 0 0"/>'
+    # Game header image - use WeChat CDN URL only
+    # ⚠️ No fallback to Steam URL (spec 4.3 + B11: Steam CDN blocks on WeChat)
+    # Games without WeChat CDN image are filtered out in Phase 1 (cron_digest.py)
+    img_url = image_map.get(d.appid, "")
+    if not img_url:
+        logger.warning(f"No WeChat CDN image for {d.name} (appid {d.appid}) — should have been filtered in Phase 1")
+        img = ""  # skip image, don't use Steam URL
     else:
-        img = '<div style="width:100%;max-width:460px;height:48px;background:#f9f9f9;border-radius:6px;margin:8px 0 0 0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#bbb">🎮 Steam</div>'
+        img = f'<img src="{img_url}" style="width:100%;max-width:460px;border-radius:6px;margin:8px 0 0 0" loading="lazy"/>'
 
     return f'''<div style="background:#fff;border:1px solid #eee;border-radius:10px;padding:12px;margin:8px 0 2px 0">
 <div style="display:flex;justify-content:space-between;align-items:center">
@@ -117,10 +120,12 @@ class ArticleGenerator:
 
     def generate_daily_digest(
         self, steam_deals: list[GameDeal], epic_free: list[GameDeal],
-        image_map: dict = None
+        image_map: dict = None,
+        version_id: str = ""
     ) -> str:
         """Generate a rich WeChat article from deal data.
         image_map: {appid: wechat_cdn_url} for game images uploaded to WeChat.
+        version_id: short version tag (e.g. "V260610-a3f8c2"), added to article footer.
         """
         if image_map is None:
             image_map = {}
@@ -135,9 +140,11 @@ class ArticleGenerator:
                 unique.append(d)
 
         if not unique and not epic_free:
+            ver_footer = f'<p style="font-size:10px;color:#ccc;text-align:right">Version: V{version_id}</p>' if version_id else ''
             return f'''<h2>📭 暂无折扣数据</h2>
 <p>{today_cn}，Steam 数据暂时不可达。</p>
-<blockquote>建议直接访问 Steam 查看最新特惠</blockquote>'''
+<blockquote>建议直接访问 Steam 查看最新特惠</blockquote>
+{ver_footer}'''
 
         parts = []
 
@@ -205,6 +212,11 @@ class ArticleGenerator:
             '<hr style="border:none;border-top:1px solid #eee;margin:16px 0"/>',
             '<blockquote style="font-size:12px;color:#999">📊 数据来源：Steam Store API · 每日 10:00 自动更新<br/>📱 关注本号，每日推送最值得买的游戏折扣</blockquote>',
         ])
+
+        # Version ID — visible footer so we can tell which session/agent published which version
+        parts.append(
+            '<p style="font-size:10px;color:#ccc;text-align:right;padding-top:8px">Version: V' + version_id + '</p>'
+        )
 
         return "\n".join(parts)
 

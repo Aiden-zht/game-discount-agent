@@ -16,17 +16,14 @@ logger = logging.getLogger(__name__)
 class WeChatImageUploader:
     """下载游戏封面图 → 上传到微信永久素材 → 返回微信 CDN URL"""
 
-    def __init__(self):
+    def __init__(self, proxy: str = "socks5://127.0.0.1:7891"):
         self._http: Optional[httpx.Client] = None
+        self._proxy = proxy
         self._cache: dict[int, str] = {}  # appid → wechat_url
 
     def _get_http(self) -> httpx.Client:
         if self._http is None:
-            proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
-            if proxy:
-                self._http = httpx.Client(timeout=20, proxy=proxy)
-            else:
-                self._http = httpx.Client(timeout=20)
+            self._http = httpx.Client(timeout=20, proxy=self._proxy)
         return self._http
 
     def _download_image(self, url: str) -> bytes:
