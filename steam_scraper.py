@@ -181,13 +181,22 @@ class SteamScraper:
                         info = bilingual[d.appid]
                         d.name_en = info["en"]
                         d.name_cn = info["cn"]
+                        # 清理 Steam API l=schinese 返回的英文副标题混入
+                        # 例如 "潜水员戴夫 DAVE THE DIVER" → "潜水员戴夫"
+                        en_raw = (d.name_en or "").strip()
+                        cn_raw = (d.name_cn or "").strip()
+                        if en_raw and cn_raw and en_raw.lower() in cn_raw.lower():
+                            cn_clean = cn_raw.replace(en_raw, "").strip().strip("/").strip()
+                            if cn_clean:
+                                d.name_cn = cn_clean
+                                logger.debug(f"  清理cn混入英文: {en_raw} in {cn_raw} → {cn_clean}")
                         if info["header_image"]:
                             d.header_image = info["header_image"]
                         if info["review_score"] > 0:
                             d.review_score = info["review_score"]
                             d.review_desc = info["review_desc"]
 
-                # 批量翻译：中文名空缺或中英文相同时，用 DeepSeek 翻译
+                # 批量翻译：中文名空缺或中英文相同时，用 LLM 翻译
                 for d in deals:
                     en = (d.name_en or d.name).strip()
                     cn = (d.name_cn or "").strip()
@@ -195,7 +204,7 @@ class SteamScraper:
                         need_translate.append(d)
 
                 if need_translate:
-                    # 读 .env 拿 API Key（优先用 day77 中转，和主模型一致）
+                    # 读 .env 拿 API Key
                     dotenv_path = os.path.expanduser("~/.hermes/.env")
                     api_key = ""
                     api_base = "https://api.day77.icu/v1"
@@ -208,98 +217,88 @@ class SteamScraper:
                                     break
                     if not api_key:
                         api_key = os.environ.get("DAY77_API_KEY", os.environ.get("DEEPSEEK_API_KEY", ""))
+
+                    # 策略1：批量翻译（优先，少 token）
+                    translated_count = 0
                     if api_key:
                         names_en = [d.name_en or d.name for d in need_translate]
-                        try:
-                            prompt = f"翻译以下Steam游戏名成简体中文，只返回JSON数组，每个元素是中文名，不要解释：{json.dumps(names_en, ensure_ascii=False)}"
-                            resp = self._client.post(
-                                f"{api_base}/chat/completions",
-                                json={
-                                    "model": "deepseek-chat",
-                                    "messages": [
-                                        {"role": "system", "content": "你是Steam游戏名翻译专家。只返回JSON数组，不要任何其他文字。"},
-                                        {"role": "user", "content": prompt},
-                                    ],
-                                    "temperature": 0.1,
-                                    "max_tokens": 1000,
-                                },
-                                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                            )
-                            resp.raise_for_status()
-                            result = resp.json()
-                            content = result["choices"][0]["message"]["content"].strip()
-                            # Parse JSON from response
-                            import re
-                            json_match = re.search(r'\[.*?\]', content, re.DOTALL)
-                            if json_match:
-                                translations = json.loads(json_match.group())
-                                for i, d in enumerate(need_translate):
-                                    if i < len(translations) and translations[i]:
-                                        d.name_cn = translations[i]
-                                        d._translated = True
-                                        logger.info(f"  翻译: {d.name_en or d.name} → {d.name_cn}")
-                        except Exception as e:
-                            logger.warning(f"翻译API失败 ({api_base}), 尝试讯飞备选: {e}")
-                            # 讯飞备选翻译
+                        batch_ok = False
+                        for attempt_name, api_url, model, auth_hdr in [
+                            ("day77", f"{api_base}/chat/completions", "deepseek-chat", f"Bearer {api_key}"),
+                            ("讯飞", "https://maas-api.cn-huabei-1.xf-yun.com/v2/chat/completions", "xopqwen36v35b", "Bearer apikey:secret"),
+                        ]:
                             try:
-                                xf_url = "https://maas-api.cn-huabei-1.xf-yun.com/v2"
-                                xf_headers = {"Authorization": "Bearer apikey:secret"}
-                                resp2 = self._client.post(
-                                    f"{xf_url}/chat/completions",
+                                resp = self._client.post(
+                                    api_url,
                                     json={
-                                        "model": "xopqwen36v35b",
+                                        "model": model,
                                         "messages": [
-                                            {"role": "system", "content": "你是Steam游戏名翻译专家。只返回JSON数组，不要任何其他文字。"},
-                                            {"role": "user", "content": prompt},
+                                            {"role": "system", "content": "你是Steam游戏名翻译专家。只返回JSON数组，每个元素是简体中文游戏名，不要任何其他文字。"},
+                                            {"role": "user", "content": f"翻译以下游戏名：{json.dumps(names_en, ensure_ascii=False)}"},
                                         ],
                                         "temperature": 0.1,
                                         "max_tokens": 1000,
                                     },
-                                    headers=xf_headers,
-                                    timeout=15,
+                                    headers={"Authorization": auth_hdr, "Content-Type": "application/json"},
+                                    timeout=20,
                                 )
-                                resp2.raise_for_status()
-                                result2 = resp2.json()
-                                content2 = result2["choices"][0]["message"]["content"].strip()
+                                resp.raise_for_status()
+                                result = resp.json()
+                                content = result["choices"][0]["message"]["content"].strip()
                                 import re
-                                json_match2 = re.search(r'\[.*?\]', content2, re.DOTALL)
-                                if json_match2:
-                                    translations = json.loads(json_match2.group())
+                                json_match = re.search(r'\[.*?\]', content, re.DOTALL)
+                                if json_match:
+                                    translations = json.loads(json_match.group())
                                     for i, d in enumerate(need_translate):
                                         if i < len(translations) and translations[i]:
                                             d.name_cn = translations[i]
                                             d._translated = True
-                                            logger.info(f"  翻译(讯飞): {d.name_en or d.name} → {d.name_cn}")
+                                            translated_count += 1
+                                            logger.info(f"  翻译({attempt_name}): {d.name_en or d.name} → {d.name_cn}")
+                                    batch_ok = True
+                                    logger.info(f"批量翻译成功({attempt_name}): {translated_count}/{len(need_translate)}")
                                 else:
-                                    logger.warning(f"讯飞翻译返回格式异常，回退到兜底表")
-                            except Exception as e2:
-                                logger.warning(f"讯飞翻译也失败 ({e2})，使用兜底表")
-                    else:
-                        logger.info("无 API Key，使用兜底表翻译")
-            else:
-                logger.debug("无英文名需要翻译")
+                                    logger.warning(f"批量翻译({attempt_name})返回格式异常，降级逐款翻译")
+                            except Exception as e:
+                                logger.warning(f"批量翻译({attempt_name})失败: {e}")
+                            if batch_ok:
+                                break
 
-            # 补充硬编码翻译（API 翻译经常不通，用预置表兜底）
-            FALLBACK_TRANSLATIONS = {
-                "Resident Evil 4": "生化危机 4",
-                "Resident Evil Requiem": "恶灵附身：安魂曲",
-                "Escape the Backrooms": "逃离密室",
-                "Sons Of The Forest": "森林之子",
-                "Grand Theft Auto V Enhanced": "Grand Theft Auto V 增强版",
-                "Cuphead & The Delicious Last Course": "茶杯头：最后的美餐",
-                "Street Fighter 6 Years 1-2 Fighters Edition": "街头霸王6 第1-2年斗士版",
-                "Palworld": "幻兽帕鲁",
-                "Forza Horizon 5": "极限竞速：地平线 5",
-                "MONSTER HUNTER RISE + SUNBREAK": "怪物猎人：崛起 曙光",
-                "MONSTER HUNTER RISE + SUNBREAK 组合包": "怪物猎人：崛起 曙光",
-            }
-            for d in deals:
-                en = d.name_en or d.name
-                cn = d.name_cn or ""
-                if not cn or cn == "MISSING" or cn == en:
-                    if en in FALLBACK_TRANSLATIONS:
-                        d.name_cn = FALLBACK_TRANSLATIONS[en]
-                        d._translated = True
+                    # 策略2：逐款翻译（兜底，每个游戏单独请求）
+                    for d in need_translate:
+                        if d.name_cn and d._translated:
+                            continue
+                        if translated_count >= len(need_translate):
+                            break
+                        try:
+                            en = d.name_en or d.name
+                            resp = self._client.post(
+                                "https://maas-api.cn-huabei-1.xf-yun.com/v2/chat/completions",
+                                json={
+                                    "model": "xopqwen36v35b",
+                                    "messages": [
+                                        {"role": "system", "content": "你是Steam游戏名翻译专家。只返回简体中文游戏名，不要任何解释或其他文字。"},
+                                        {"role": "user", "content": f"将以下Steam游戏名翻译成简体中文：{en}"},
+                                    ],
+                                    "temperature": 0.1,
+                                    "max_tokens": 50,
+                                },
+                                headers={"Authorization": "Bearer apikey:secret", "Content-Type": "application/json"},
+                                timeout=15,
+                            )
+                            resp.raise_for_status()
+                            result = resp.json()
+                            cn = result["choices"][0]["message"]["content"].strip()
+                            if cn:
+                                d.name_cn = cn
+                                d._translated = True
+                                translated_count += 1
+                                logger.info(f"  逐款翻译: {en} → {cn}")
+                        except Exception as e:
+                            logger.warning(f"逐款翻译失败 {d.name_en or d.name}: {e}")
+                            # 保留英文名（Steam API 已返回）
+                else:
+                    logger.debug("无需翻译")
 
             # 标记 DLC/Bundle（type=1 表示 Bundle/DLC、
             # PARENT_APPID_MAP 作为兜底）
