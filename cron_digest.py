@@ -9,8 +9,11 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 from datetime import datetime
+
+import yaml
 
 # Steam API 翻墙走本地 mihomo SOCKS5，微信 API 直连走代理=0（不通代理）
 # ⚠️ 绝对不能设全局 HTTP_PROXY/HTTPS_PROXY，否则微信请求也会走代理烧钱
@@ -33,6 +36,65 @@ logger = logging.getLogger("cron_digest")
 
 # State file path
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+
+# KB recommendation thresholds file (source of truth for filtering criteria)
+_KB_THRESHOLDS_FILE = (
+    "/mnt/data/daqian-ai-workshop/references/agent_mem/"
+    "业务/写作/公众号/创作规范/游戏折扣文章风格库/06-AgentA使用指南.md"
+)
+
+# Hardcoded fallback (must match KB defaults — updated 2026-06-13)
+_DEFAULT_THRESHOLDS = {
+    "min_discount_percent": 10,
+    "min_positive_review_percent": 70,
+    "min_review_count": None,
+}
+
+
+def _load_recommendation_thresholds() -> dict:
+    """Load recommendation thresholds from KB frontmatter.
+
+    Reads the YAML frontmatter of 06-AgentA使用指南.md and extracts
+    ``recommendation_thresholds``. Falls back to hardcoded defaults if
+    the KB file is missing or unparseable.
+
+    This is the runtime bridge between KB (source of truth) and Phase 1
+    Python scripts — when you change thresholds in KB, Phase 1 picks
+    them up automatically on next run.
+    """
+    try:
+        with open(_KB_THRESHOLDS_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+    except (FileNotFoundError, IOError) as e:
+        logger.warning("KB threshold file not found, using hardcoded defaults: %s", e)
+        return dict(_DEFAULT_THRESHOLDS)
+
+    # Extract YAML frontmatter between --- markers
+    m = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+    if not m:
+        logger.warning("KB threshold file has no YAML frontmatter, using defaults")
+        return dict(_DEFAULT_THRESHOLDS)
+
+    try:
+        fm = yaml.safe_load(m.group(1))
+    except yaml.YAMLError as e:
+        logger.warning("KB threshold frontmatter parse error: %s, using defaults", e)
+        return dict(_DEFAULT_THRESHOLDS)
+
+    thresholds = fm.get("recommendation_thresholds")
+    if not thresholds:
+        logger.warning("KB threshold file missing recommendation_thresholds field, using defaults")
+        return dict(_DEFAULT_THRESHOLDS)
+
+    # Merge with defaults to fill any missing keys
+    merged = dict(_DEFAULT_THRESHOLDS)
+    merged.update(thresholds)
+    logger.info(
+        "Loaded recommendation thresholds from KB: discount>=%s%%, review>=%s%%",
+        merged["min_discount_percent"],
+        merged["min_positive_review_percent"],
+    )
+    return merged
 
 
 def _serialize_deal(d, image_map=None) -> dict:
@@ -103,6 +165,35 @@ def main():
     success_count = sum(1 for v in image_map.values() if "mmbiz.qpic.cn" in v)
     logger.info(f"Images uploaded: {success_count}/{len(unique)}")
 
+    # --- Load recommendation thresholds from KB (source of truth) ---
+    t = _load_recommendation_thresholds()
+    min_discount = t["min_discount_percent"]
+    min_review = t["min_positive_review_percent"]
+
+    # --- Filter by recommendation criteria (per KB spec) ---
+    filtered = []
+    excluded_low_quality = []
+    for d in unique:
+        if d.discount_percent < min_discount or d.review_score < min_review:
+            excluded_low_quality.append(d)
+        else:
+            filtered.append(d)
+
+    if filtered:
+        unique = filtered
+    else:
+        # If nothing meets the standard, fall back to all games with images (don't publish empty)
+        logger.warning(
+            "No games meet recommendation criteria (discount>=%d%% AND review>=%d%%). "
+            "Using all games with images.", min_discount, min_review
+        )
+        # unique already has all games with images at this point
+
+    logger.info(f"After quality filter: {len(unique)} games (excluded {len(excluded_low_quality)} low-quality)")
+    if excluded_low_quality:
+        for d in excluded_low_quality:
+            logger.info(f"  excluded: {d.name} (折扣={d.discount_percent}% 好评={d.review_score}%)")
+
     # Filter out games with no WeChat CDN image (spec 4.3: no image = remove from recommendation)
     no_image = [d for d in unique if d.appid not in image_map or not image_map.get(d.appid, "").strip()]
     if no_image:
@@ -112,11 +203,28 @@ def main():
     unique = [d for d in unique if d.appid in image_map and image_map[d.appid].strip()]
     logger.info(f"After image filter: {len(unique)} games (removed {len(no_image)})")
 
-    # --- Step 3: Pick most popular game for cover thumb ---
+    # --- Step 3: Pick cover thumb — by purchase appeal, not just review+discount ---
+    # Per spec 4.3 cover selection: score = discount * review * IP_weight + visual_impact + urgency
     logger.info("Step 3/4: Uploading cover thumb...")
 
-    best = max(unique, key=lambda d: (d.review_score, d.discount_percent))
-    logger.info(f"Cover game: {best.name} (好评 {best.review_score}% · -{best.discount_percent}%)")
+    def _cover_appeal_score(d):
+        """Score a game for cover thumb purchase appeal (per spec 4.3)."""
+        # Dimension 1: discount × review (both matter)
+        dim1 = d.discount_percent * d.review_score / 100.0
+        # Dimension 2: IP/brand weight (heuristic: long name + high price = bigger budget game)
+        ip_weight = 1.0
+        if d.original_price_cents >= 29800:  # ≥298 RMB = full-price AAA likely
+            ip_weight = 1.8
+        elif d.original_price_cents >= 15800:  # ≥158 RMB = mid-tier
+            ip_weight = 1.4
+        # Dimension 3: visual impact — use review_score desc as proxy
+        # "特别好评" (90+) > "好评" (80+) > "多半好评" (70+)
+        visual = d.review_score / 100.0
+        return dim1 * ip_weight * 0.7 + visual * 0.3 * 100
+
+    best = max(unique, key=_cover_appeal_score)
+    appeal_score = _cover_appeal_score(best)
+    logger.info(f"Cover game: {best.name} (评分={appeal_score:.0f} · 好评 {best.review_score}% · -{best.discount_percent}%)")
 
     cover_url = getattr(best, "header_image", "") or \
                 f"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{best.appid}/header.jpg"
