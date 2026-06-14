@@ -95,6 +95,10 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
         color = "#27ae60" if d.review_score >= 80 else "#e67e22" if d.review_score >= 60 else "#e74c3c"
         review = f'<div style="font-size:11px;color:{color};margin-top:4px">👍 {d.review_score}% 好评</div>'
 
+    deadline = ""
+    if getattr(d, "deadline", ""):
+        deadline = f'<div style="font-size:11px;color:#e74c3c;margin-top:4px">⏰ 截止：{d.deadline}</div>'
+
     # Game header image - use WeChat CDN URL only
     # ⚠️ No fallback to Steam URL (spec 4.3 + B11: Steam CDN blocks on WeChat)
     # Games without WeChat CDN image are filtered out in Phase 1 (cron_digest.py)
@@ -111,6 +115,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
 <div style="margin-bottom:4px">{rank_badge}{badge} <span style="font-weight:bold;font-size:15px">{display_name}</span></div>
 <div>{price}</div>
 {review}
+{deadline}
 </div>
 </div>
 {img}
@@ -143,7 +148,7 @@ class ArticleGenerator:
         """Generate a rich WeChat article from deal data.
         image_map: {appid: wechat_cdn_url} for game images uploaded to WeChat.
         version_id: short version tag (e.g. "V260610-a3f8c2"), added to article footer.
-        deadline: 优惠截止日期（如 "2026年06月26日"），用于限时标注。
+        deadline: 旧版全局截止日期参数；保留兼容但不再展示。每款游戏使用自身 d.deadline。
         """
         if image_map is None:
             image_map = {}
@@ -177,10 +182,7 @@ class ArticleGenerator:
         # Header
         parts.append('<h2>🎮 Steam 今日特惠</h2>')
         parts.append(f'<p style="color:#666;font-size:13px">{today_cn} · 共 {len(unique)} 款值得推荐 · 按综合热度排序</p>')
-        if deadline:
-            parts.append(f'<p style="color:#e74c3c;font-size:14px;font-weight:bold">⏰ 优惠截止时间：{deadline}</p>')
-        else:
-            parts.append('<p style="color:#e74c3c;font-size:14px;font-weight:bold">⏰ 限时领取，过期不候！</p>')
+        parts.append('<p style="color:#e74c3c;font-size:14px;font-weight:bold">⏰ 每款游戏截止日期见卡片，具体以 Steam 商店页面为准</p>')
         parts.append('<hr style="border:none;border-top:2px solid #eee;margin:12px 0"/>')
 
         # 区分游戏和 DLC
@@ -270,6 +272,8 @@ class ArticleGenerator:
                     strike = " <span style='color:#999;text-decoration:line-through;font-size:11px'>" + original + "</span>"
                     price_parts.append(strike)
                 price_parts.append(f' <span style="color:{color};font-size:11px">{emoji} -{d.discount_percent}%</span>')
+                if getattr(d, "deadline", ""):
+                    price_parts.append(f' <span style="color:#e74c3c;font-size:11px">⏰ 截止：{d.deadline}</span>')
                 parts.append(
                     f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed #eee;font-size:13px">'
                     f'<span style="color:#333">{name_line}</span>'

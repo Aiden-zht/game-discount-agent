@@ -250,11 +250,8 @@ def main():
     version_id = f"{today_short}-{rand_hex}"
     logger.info(f"Version ID: V{version_id}")
 
-    # 取第一个游戏的 deadline（同批特惠应一致）
-    deadline = unique[0].deadline if unique else ""
-
     generator = ArticleGenerator()
-    article_html = generator.generate_daily_digest(unique, [], image_map=image_map, version_id=version_id, deadline=deadline)
+    article_html = generator.generate_daily_digest(unique, [], image_map=image_map, version_id=version_id)
 
     os.makedirs(STATE_DIR, exist_ok=True)
     today = datetime.now().strftime("%Y%m%d")

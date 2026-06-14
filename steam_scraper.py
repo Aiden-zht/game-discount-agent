@@ -170,26 +170,30 @@ class SteamScraper:
     # 特惠游戏
     # ------------------------------------------------------------------
 
-    def _compute_deadline(self, data: dict) -> str:
-        """从 specials 的 discount_expiration 计算最早截止时间（北京时间）"""
+    def _format_deadline(self, discount_expiration) -> str:
+        """将 Steam discount_expiration 时间戳转为北京时间日期。"""
         try:
             from datetime import datetime, timezone, timedelta
-            items = data.get("specials", {}).get("items", [])
-            min_ts = None
-            for item in items:
-                exp = item.get("discount_expiration")
-                if exp:
-                    ts = int(exp)
-                    if min_ts is None or ts < min_ts:
-                        min_ts = ts
-            if min_ts:
-                dt_utc = datetime.fromtimestamp(min_ts, tz=timezone.utc)
-                cst = timezone(timedelta(hours=8))
-                dt_cst = dt_utc.astimezone(cst)
-                return dt_cst.strftime("%Y年%m月%d日")
+            if not discount_expiration:
+                return ""
+            ts = int(discount_expiration)
+            dt_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
+            cst = timezone(timedelta(hours=8))
+            dt_cst = dt_utc.astimezone(cst)
+            return dt_cst.strftime("%Y年%m月%d日")
         except Exception as e:
             logger.warning(f"计算截止日期失败: {e}")
         return ""
+
+    def _compute_deadline(self, data: dict) -> str:
+        """从 specials 的 discount_expiration 计算最早截止时间（北京时间）。
+
+        仅用于兜底/摘要，不再注入给所有游戏；每款游戏以自身 item 的
+        discount_expiration 为准。
+        """
+        items = data.get("specials", {}).get("items", [])
+        expirations = [int(item["discount_expiration"]) for item in items if item.get("discount_expiration")]
+        return self._format_deadline(min(expirations)) if expirations else ""
 
     def get_deals(self) -> list[GameDeal]:
         """获取 Steam 当前特惠游戏（带英文+中文双语名）
@@ -217,8 +221,8 @@ class SteamScraper:
             items = data.get("specials", {}).get("items", [])
             deals = [self._api_item_to_deal(item) for item in items]
 
-            # 计算所有特惠的 earliest deadline（北京时间）
-            deadline = self._compute_deadline(data)
+            # 计算本批最早截止日期，仅给缺失 item deadline 的补充数据兜底
+            earliest_deadline = self._compute_deadline(data)
 
             # 去重（Steam API 可能有重复条目）
             seen_ids = set()
@@ -228,10 +232,6 @@ class SteamScraper:
                     seen_ids.add(d.appid)
                     unique_deals.append(d)
             deals = unique_deals
-
-            # 给所有 deals 注入 deadline
-            for d in deals:
-                d.deadline = deadline
 
             # 批量查询 appdetails + appreviews 获取双语名和好评率
             appids = [d.appid for d in deals if d.appid]
@@ -285,7 +285,7 @@ class SteamScraper:
                     d.is_dlc = True
 
             # 不足9款时从 top_sellers 补充
-            self._supplement_top_sellers(data, deals, seen_ids, FALLBACK, need_translate, deadline)
+            self._supplement_top_sellers(data, deals, seen_ids, FALLBACK, need_translate, earliest_deadline)
 
             if need_translate:
                 self._batch_translate(need_translate)
@@ -380,7 +380,8 @@ class SteamScraper:
 
             ts_deal.source = "top_sellers_supplement"
             deals.append(ts_deal)
-            ts_deal.deadline = deadline  # 注入 deadline
+            if not ts_deal.deadline:
+                ts_deal.deadline = deadline  # 仅缺失 discount_expiration 时使用本批最早截止日期兜底
             seen_ids.add(ts_appid)
             logger.info(f"从 top_sellers 补充: {ts_deal.name} (appid={ts_appid}, -{ts_deal.discount_percent}%, 好评{ts_deal.review_score}%)")
             if len(deals) >= min_games:
@@ -521,6 +522,7 @@ class SteamScraper:
             store_url=f"https://store.steampowered.com/app/{item.get('id', 0)}/",
             source="steam",
             fetched_at=datetime.now(timezone.utc).isoformat(),
+            deadline=self._format_deadline(item.get("discount_expiration")),
         )
 
     def get_top_sellers(self) -> list[GameDeal]:
