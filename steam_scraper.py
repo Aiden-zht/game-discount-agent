@@ -59,6 +59,7 @@ class GameDeal:
     store_url: str = ""
     source: str = "steam"  # steam / steam_free
     fetched_at: str = ""
+    deadline: str = ""  # 优惠截止时间 (如 "2026-06-26")
 
     @property
     def original_price(self) -> str:
@@ -169,6 +170,27 @@ class SteamScraper:
     # 特惠游戏
     # ------------------------------------------------------------------
 
+    def _compute_deadline(self, data: dict) -> str:
+        """从 specials 的 discount_expiration 计算最早截止时间（北京时间）"""
+        try:
+            from datetime import datetime, timezone, timedelta
+            items = data.get("specials", {}).get("items", [])
+            min_ts = None
+            for item in items:
+                exp = item.get("discount_expiration")
+                if exp:
+                    ts = int(exp)
+                    if min_ts is None or ts < min_ts:
+                        min_ts = ts
+            if min_ts:
+                dt_utc = datetime.fromtimestamp(min_ts, tz=timezone.utc)
+                cst = timezone(timedelta(hours=8))
+                dt_cst = dt_utc.astimezone(cst)
+                return dt_cst.strftime("%Y年%m月%d日")
+        except Exception as e:
+            logger.warning(f"计算截止日期失败: {e}")
+        return ""
+
     def get_deals(self) -> list[GameDeal]:
         """获取 Steam 当前特惠游戏（带英文+中文双语名）
 
@@ -195,6 +217,9 @@ class SteamScraper:
             items = data.get("specials", {}).get("items", [])
             deals = [self._api_item_to_deal(item) for item in items]
 
+            # 计算所有特惠的 earliest deadline（北京时间）
+            deadline = self._compute_deadline(data)
+
             # 去重（Steam API 可能有重复条目）
             seen_ids = set()
             unique_deals = []
@@ -203,6 +228,10 @@ class SteamScraper:
                     seen_ids.add(d.appid)
                     unique_deals.append(d)
             deals = unique_deals
+
+            # 给所有 deals 注入 deadline
+            for d in deals:
+                d.deadline = deadline
 
             # 批量查询 appdetails + appreviews 获取双语名和好评率
             appids = [d.appid for d in deals if d.appid]
@@ -256,7 +285,7 @@ class SteamScraper:
                     d.is_dlc = True
 
             # 不足9款时从 top_sellers 补充
-            self._supplement_top_sellers(data, deals, seen_ids, FALLBACK, need_translate)
+            self._supplement_top_sellers(data, deals, seen_ids, FALLBACK, need_translate, deadline)
 
             if need_translate:
                 self._batch_translate(need_translate)
@@ -271,7 +300,8 @@ class SteamScraper:
 
     def _supplement_top_sellers(self, data: dict, deals: list[GameDeal],
                                 seen_ids: set, fallback: dict,
-                                need_translate: list) -> None:
+                                need_translate: list,
+                                deadline: str = "") -> None:
         """从 top_sellers 补充不足9款的游戏"""
         min_games = 9
         if len(deals) >= min_games:
@@ -350,6 +380,7 @@ class SteamScraper:
 
             ts_deal.source = "top_sellers_supplement"
             deals.append(ts_deal)
+            ts_deal.deadline = deadline  # 注入 deadline
             seen_ids.add(ts_appid)
             logger.info(f"从 top_sellers 补充: {ts_deal.name} (appid={ts_appid}, -{ts_deal.discount_percent}%, 好评{ts_deal.review_score}%)")
             if len(deals) >= min_games:

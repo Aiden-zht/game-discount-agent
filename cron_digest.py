@@ -115,6 +115,7 @@ def _serialize_deal(d, image_map=None) -> dict:
         "review_desc": d.review_desc or "",
         "is_dlc": d.is_dlc,
         "header_image": getattr(d, "header_image", "") or "",
+        "deadline": getattr(d, "deadline", ""),
     }
     # Inject WeChat CDN cover URL if available
     cover_url = image_map.get(d.appid, "")
@@ -249,8 +250,11 @@ def main():
     version_id = f"{today_short}-{rand_hex}"
     logger.info(f"Version ID: V{version_id}")
 
+    # 取第一个游戏的 deadline（同批特惠应一致）
+    deadline = unique[0].deadline if unique else ""
+
     generator = ArticleGenerator()
-    article_html = generator.generate_daily_digest(unique, [], image_map=image_map, version_id=version_id)
+    article_html = generator.generate_daily_digest(unique, [], image_map=image_map, version_id=version_id, deadline=deadline)
 
     os.makedirs(STATE_DIR, exist_ok=True)
     today = datetime.now().strftime("%Y%m%d")

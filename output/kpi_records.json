@@ -9,6 +9,34 @@
     "published": true,
     "media_id": "iYzIpS44irj0Fzv138qclJ0jQiGZa1ahP4-GjVmHqJi4sDASKytro7ImhUi7xASK",
     "degraded": false,
-    "warnings_detail": ["APPID 129576: name_cn为空 (DLC特殊版本)"]
+    "warnings_detail": [
+      "APPID 129576: name_cn为空 (DLC特殊版本)"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "run_number": 2,
+    "agent_a_score": 110,
+    "agent_b_score": 105,
+    "blocking_count": 0,
+    "warning_count": 0,
+    "published": true,
+    "media_id": "iYzIpS44irj0Fzv138qclLFyFy3MPLCifdtwOZhOOvwauGNGnpvQ-46LNBMgZj4l",
+    "degraded": false,
+    "warnings_detail": []
+  },
+  {
+    "run_number": 3,
+    "date": "2026-06-14",
+    "blocking_count": 0,
+    "warning_count": 1,
+    "agent_a_score": 99,
+    "agent_b_score": 105,
+    "warnings_detail": [
+      "B16: 限时折扣应标注截止时间"
+    ],
+    "published": true,
+    "degraded": false,
+    "media_id": "iYzIpS44irj0Fzv138qclBdWqyzVVRZETTLxGa6pqCNrMi57v7A0EQ7aoSielumh"
   }
 ]

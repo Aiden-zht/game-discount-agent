@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Discount tiers: (min, max, emoji, hex_color, label)
 DISCOUNT_TIERS = [
-    (75, 100, "🔥", "#e74c3c", "史低"),
+    (75, 100, "🔥", "#e74c3c", "特惠"),
     (50, 74, "⭐", "#e67e22", "超值"),
     (25, 49, "👍", "#f1c40f", "推荐"),
     (0, 24, "💫", "#95a5a6", "一般"),
@@ -56,6 +56,7 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
     # - Resident Evil 4 / 生化危机4 (API 有中文名) → en / cn
     # - Escape the Backrooms [逃离密室] (翻译的)    → en [cn]
     # - Cuphead & The Delicious Last Course          → 仅英文
+    # ⚠️ R.E.P.O. 等无官方中文名的游戏：name_cn=name_en，过滤后不会进入列表
     en_name = d.name_en or d.name
     cn_name = d.name_cn or d.name
     if cn_name and " / " in cn_name:
@@ -65,9 +66,24 @@ def _game_card(d: GameDeal, rank: int = 0, image_map: dict = None) -> str:
         # Translated: same / format
         display_name = f"{en_name} / {cn_name}"
     elif en_name and cn_name and en_name != cn_name:
-        display_name = f"{en_name} / {cn_name}"
+        # Has both names and they differ — check for duplicate English in cn_name
+        # e.g. "DAVE THE DIVER / 潜水员戴夫 DAVE THE DIVER" → "DAVE THE DIVER / 潜水员戴夫"
+        if en_name.lower() in cn_name.lower():
+            # cn_name contains the English name — strip it and use only Chinese part
+            cn_clean = cn_name.replace(en_name, "").strip().strip("/").strip()
+            if cn_clean:
+                display_name = f"{en_name} / {cn_clean}"
+            else:
+                # Nothing left after stripping English — use English only
+                display_name = en_name
+                logger.warning(f"游戏名重复清理后为空: {d.name} (appid {d.appid}), 使用英文名")
+        else:
+            display_name = f"{en_name} / {cn_name}"
     else:
+        # name_cn == name_en or both empty — no Chinese name available
+        # Per spec B25: allowed for games without official Chinese name (R.E.P.O. etc.)
         display_name = en_name or d.name
+        logger.info(f"游戏 {d.appid} 无中文名，显示纯英文: {display_name}")
 
     # DLC/Bundle 标注
     dlc_tag = ' <span style="font-size:11px;color:#e67e22;font-weight:normal;background:#fef3e2;padding:1px 5px;border-radius:3px">DLC</span>' if d.is_dlc else ''
@@ -121,23 +137,33 @@ class ArticleGenerator:
     def generate_daily_digest(
         self, steam_deals: list[GameDeal], epic_free: list[GameDeal],
         image_map: dict = None,
-        version_id: str = ""
+        version_id: str = "",
+        deadline: str = ""
     ) -> str:
         """Generate a rich WeChat article from deal data.
         image_map: {appid: wechat_cdn_url} for game images uploaded to WeChat.
         version_id: short version tag (e.g. "V260610-a3f8c2"), added to article footer.
+        deadline: 优惠截止日期（如 "2026年06月26日"），用于限时标注。
         """
         if image_map is None:
             image_map = {}
         today_cn = datetime.now().strftime("%Y年%m月%d日")
 
-        # Dedup by appid, sort by discount descending
+        # Dedup by appid
         seen = set()
         unique = []
         for d in sorted(steam_deals, key=lambda x: x.discount_percent, reverse=True):
             if d.appid not in seen:
                 seen.add(d.appid)
                 unique.append(d)
+
+        # Sort by heat score: discount * review * IP_weight (per spec: 按热度排序，不设上限)
+        def _heat_score(d):
+            dim1 = d.discount_percent * d.review_score / 100.0
+            ip = 1.8 if d.original_price_cents >= 29800 else 1.4 if d.original_price_cents >= 15800 else 1.0
+            return dim1 * ip
+
+        unique.sort(key=_heat_score, reverse=True)
 
         if not unique and not epic_free:
             ver_footer = f'<p style="font-size:10px;color:#ccc;text-align:right">Version: V{version_id}</p>' if version_id else ''
@@ -149,8 +175,12 @@ class ArticleGenerator:
         parts = []
 
         # Header
-        parts.append(f'<h2>🎮 Steam 今日特惠</h2>')
-        parts.append(f'<p style="color:#666;font-size:13px">{today_cn} · 共 {len(unique)} 款折扣</p>')
+        parts.append('<h2>🎮 Steam 今日特惠</h2>')
+        parts.append(f'<p style="color:#666;font-size:13px">{today_cn} · 共 {len(unique)} 款值得推荐 · 按综合热度排序</p>')
+        if deadline:
+            parts.append(f'<p style="color:#e74c3c;font-size:14px;font-weight:bold">⏰ 优惠截止时间：{deadline}</p>')
+        else:
+            parts.append('<p style="color:#e74c3c;font-size:14px;font-weight:bold">⏰ 限时领取，过期不候！</p>')
         parts.append('<hr style="border:none;border-top:2px solid #eee;margin:12px 0"/>')
 
         # 区分游戏和 DLC
@@ -158,43 +188,96 @@ class ArticleGenerator:
         dlcs = [d for d in unique if d.is_dlc]
 
         # ---- 游戏专区 ----
+        # 主卡区固定 9 款卡片，不足 9 款时从 DLC/低折扣补卡，超过 9 款时多余的走低列表
+        MAIN_MAX = 9
 
-        # Section: 史低 (≥75%) — 游戏
+        # 按热度分档，每档内按折扣×好评率排序
         tier1 = [d for d in games if d.discount_percent >= 75]
-        if tier1:
-            parts.append('<h3 style="color:#e74c3c;margin:16px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e74c3c">🔥 史低专区 · 游戏</h3>')
-            parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 75% 以上，历史最低价</p>')
-            for i, d in enumerate(tier1, 1):
+        tier2 = [d for d in games if 50 <= d.discount_percent < 75]
+        tier3 = [d for d in games if d.discount_percent < 50]
+        tier1.sort(key=lambda d: d.discount_percent * d.review_score, reverse=True)
+        tier2.sort(key=lambda d: d.discount_percent * d.review_score, reverse=True)
+        tier3.sort(key=lambda d: d.discount_percent * d.review_score, reverse=True)
+
+        # 全量有序游戏列表
+        all_games_sorted = tier1 + tier2 + tier3
+        total_games = len(all_games_sorted)
+
+        # 主卡区取前 MAIN_MAX 款
+        main_show = all_games_sorted[:MAIN_MAX]
+        overflow_games = all_games_sorted[MAIN_MAX:] if total_games > MAIN_MAX else []
+        main_appids = set(d.appid for d in main_show)
+
+        # 拆分各档的展示/溢出
+        def _split(tier):
+            show = [d for d in tier if d.appid in main_appids]
+            over = [d for d in tier if d.appid not in main_appids]
+            return show, over
+
+        tier1_main, tier1_overflow = _split(tier1)
+        tier2_main, tier2_overflow = _split(tier2)
+        tier3_main, tier3_overflow = _split(tier3)
+
+        # ---- 史低 (≥75%) — 游戏 ----
+        if tier1_main:
+            parts.append('<h3 style="color:#e74c3c;margin:16px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e74c3c">🔥 特惠专区 · 游戏</h3>')
+            parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">限时折扣 75% 以上</p>')
+            for i, d in enumerate(tier1_main, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
 
-        # Section: 超值 (50-74%) — 游戏
-        tier2 = [d for d in games if 50 <= d.discount_percent < 75]
-        if tier2:
+        # ---- 超值 (50-74%) — 游戏 ----
+        if tier2_main:
             parts.append('<h3 style="color:#e67e22;margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #e67e22">⭐ 超值推荐 · 游戏</h3>')
             parts.append('<p style="font-size:12px;color:#999;margin:0 0 8px 0">折扣 50% 以上，值得入手</p>')
-            for i, d in enumerate(tier2, 1):
+            for i, d in enumerate(tier2_main, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
 
-        # Section: 其他 (<50%) — 游戏
-        tier3 = [d for d in games if d.discount_percent < 50]
-        if tier3:
+        # ---- 其他 (<50%) — 游戏 ----
+        if tier3_main:
             parts.append('<h3 style="color:#95a5a6;margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid #95a5a6">💫 更多折扣 · 游戏</h3>')
-            for i, d in enumerate(tier3, 1):
+            for i, d in enumerate(tier3_main, 1):
                 parts.append(_game_card(d, rank=i, image_map=image_map))
 
-        # ---- DLC 专区（若有 DLC） ----
-        if dlcs:
-            # DLC 按折扣排序
-            for tier_name, emoji, color, lo, hi in [
-                ("🔥 史低 DLC", "🔥", "#e74c3c", 75, 100),
-                ("⭐ 超值 DLC", "⭐", "#e67e22", 50, 74),
-                ("💫 更多 DLC", "💫", "#95a5a6", 0, 49),
-            ]:
-                tier = [d for d in dlcs if lo <= d.discount_percent <= hi]
-                if tier:
-                    parts.append(f'<h4 style="color:{color};margin:32px 0 8px 0;padding-bottom:10px;border-bottom:3px solid {color}">{tier_name}</h4>')
-                    for i, d in enumerate(tier, 1):
-                        parts.append(_game_card(d, rank=i, image_map=image_map))
+        # ---- 更多推荐（纯文字列表，无配图） ----
+        overflow_all = overflow_games + dlcs
+        # 去重保持顺序
+        seen_overflow = set()
+        overflow_unique = []
+        for d in overflow_all:
+            if d.appid not in seen_overflow:
+                seen_overflow.add(d.appid)
+                overflow_unique.append(d)
+        if overflow_unique:
+            parts.append('<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>')
+            parts.append('<h3 style="color:#666;margin:20px 0 10px 0;font-size:16px">📋 更多推荐</h3>')
+            parts.append(f'<p style="font-size:12px;color:#999;margin:0 0 10px 0">共 {total_games} 款游戏符合推荐标准，以下为其余 {len(overflow_unique)} 款（含 DLC）</p>')
+            for d in overflow_unique:
+                emoji, color, label = _discount_tag(d)
+                dlc_tag = ' [DLC]' if d.is_dlc else ''
+                display_en = d.name_en or d.name
+                display_cn = (d.name_cn or "").replace(display_en, "").strip().strip("/").strip()
+                if display_cn and display_en and display_en != display_cn:
+                    name_line = f'{display_en} / {display_cn}'
+                elif display_cn:
+                    name_line = display_cn
+                else:
+                    name_line = display_en
+                if dlc_tag:
+                    name_line += dlc_tag
+                original = d.original_price if d.original_price != "¥ 0.00" else ""
+                price_parts = [f'<span style="color:{color};font-weight:bold">{d.final_price}</span>']
+                if original:
+                    strike = " <span style='color:#999;text-decoration:line-through;font-size:11px'>" + original + "</span>"
+                    price_parts.append(strike)
+                price_parts.append(f' <span style="color:{color};font-size:11px">{emoji} -{d.discount_percent}%</span>')
+                parts.append(
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed #eee;font-size:13px">'
+                    f'<span style="color:#333">{name_line}</span>'
+                    f'<span>{" ".join(price_parts)}</span>'
+                    f'</div>'
+                )
+
+        # DLC 已合并到"更多推荐"纯文字列表
 
         # Epic free section
         if epic_free:

@@ -206,6 +206,55 @@ def _multipart_upload(client: httpx.Client, url: str, token: str, file_bytes: by
     return resp.json()
 
 
+RETRYABLE_HTTP_CODES = {502, 503, 504, 429}
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 5  # seconds
+
+
+def _should_retry(resp: httpx.Response) -> bool:
+    """Check if HTTP response indicates a transient failure worth retrying."""
+    if resp.status_code in RETRYABLE_HTTP_CODES:
+        return True
+    # Also retry on Cloudflare origin errors that return 200 with errcode
+    try:
+        data = resp.json()
+        if data.get("errcode") in (-1, 40001, 40002, 41001, 42001, 48005):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _retry_wechat_call(fn, *args, **kwargs):
+    """Execute fn with exponential backoff retry for transient failures."""
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return fn(*args, **kwargs)
+        except WeChatError as e:
+            last_exc = e
+            # Non-retryable error codes
+            if e.errcode in (48001, 45009, 40164, 40003, 40005, 40006, 40013, 40035, 40125):
+                raise
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            last_exc = e
+        except httpx.HTTPStatusError as e:
+            if not _should_retry(e.response):
+                raise
+            last_exc = e
+
+        if attempt < MAX_RETRIES:
+            delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            logger.warning(
+                f"Transient failure (attempt {attempt}/{MAX_RETRIES}): {last_exc}. "
+                f"Retrying in {delay}s..."
+            )
+            time.sleep(delay)
+    raise RuntimeError(
+        f"All {MAX_RETRIES} retry attempts exhausted. Last error: {last_exc}"
+    )
+
+
 def get_access_token(force_refresh: bool = False) -> str:
     global _token_cache
     now = time.time()
@@ -287,6 +336,10 @@ def create_draft(article: Article, client: Optional[httpx.Client] = None) -> str
     Create a draft in WeChat 草稿箱 with a proper thumbnail.
     Returns media_id (this is saved as a draft for later manual or automatic publish).
     """
+    return _retry_wechat_call(_create_draft_impl, article, client)
+
+
+def _create_draft_impl(article: Article, client: Optional[httpx.Client] = None) -> str:
     token = get_access_token()
     close_client = False
     if client is None:
@@ -332,6 +385,10 @@ def publish_draft(media_id: str, client: Optional[httpx.Client] = None) -> Publi
     Note: This API requires the account to be in the 发布能力 beta (gray rollout).
     If it fails with 48001, the draft is still saved in 草稿箱 for manual publish.
     """
+    return _retry_wechat_call(_publish_draft_impl, media_id, client)
+
+
+def _publish_draft_impl(media_id: str, client: Optional[httpx.Client] = None) -> PublishResult:
     token = get_access_token()
     close_client = False
     if client is None:
