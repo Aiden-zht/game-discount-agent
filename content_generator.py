@@ -182,7 +182,6 @@ class ArticleGenerator:
         # Header
         parts.append('<h2>🎮 Steam 今日特惠</h2>')
         parts.append(f'<p style="color:#666;font-size:13px">{today_cn} · 共 {len(unique)} 款值得推荐 · 按综合热度排序</p>')
-        parts.append('<p style="color:#e74c3c;font-size:14px;font-weight:bold">⏰ 每款游戏截止日期见卡片，具体以 Steam 商店页面为准</p>')
         parts.append('<hr style="border:none;border-top:2px solid #eee;margin:12px 0"/>')
 
         # 区分游戏和 DLC

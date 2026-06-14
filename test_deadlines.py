@@ -50,7 +50,7 @@ class DeadlineTests(unittest.TestCase):
         html = ArticleGenerator().generate_daily_digest(deals, [], version_id="TEST")
 
         self.assertNotIn("优惠截止时间：", html)
-        self.assertIn("具体以 Steam 商店页面为准", html)
+        self.assertNotIn("每款游戏截止日期见卡片，具体以 Steam 商店页面为准", html)
         self.assertIn("截止：2026年06月17日", html)
         self.assertIn("截止：2026年06月20日", html)
         self.assertRegex(html, re.compile(r"Game A[\s\S]*截止：2026年06月17日"))
