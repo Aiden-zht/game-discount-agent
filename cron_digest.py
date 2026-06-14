@@ -37,29 +37,31 @@ logger = logging.getLogger("cron_digest")
 # State file path
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
-# KB recommendation thresholds file (source of truth for filtering criteria)
+# Business package recommendation thresholds file (source of truth for filtering criteria)
 _KB_THRESHOLDS_FILE = (
-    "/mnt/data/daqian-ai-workshop/references/agent_mem/"
-    "业务/写作/公众号/创作规范/游戏折扣文章风格库/06-AgentA使用指南.md"
+    "/mnt/data/daqian-ai-workshop/tools/game-discount-agent/"
+    "specs/游戏折扣文章风格库/06-AgentA使用指南.md"
 )
 
-# Hardcoded fallback (must match KB defaults — updated 2026-06-13)
+# Hardcoded fallback (must match business specs defaults — updated 2026-06-14)
 _DEFAULT_THRESHOLDS = {
     "min_discount_percent": 10,
-    "min_positive_review_percent": 70,
+    "min_positive_review_percent": 40,
     "min_review_count": None,
+    "main_card_max": 9,
+    "overflow_to_text_list": True,
 }
 
 
 def _load_recommendation_thresholds() -> dict:
     """Load recommendation thresholds from KB frontmatter.
 
-    Reads the YAML frontmatter of 06-AgentA使用指南.md and extracts
+    Reads the YAML frontmatter of specs/游戏折扣文章风格库/06-AgentA使用指南.md and extracts
     ``recommendation_thresholds``. Falls back to hardcoded defaults if
     the KB file is missing or unparseable.
 
-    This is the runtime bridge between KB (source of truth) and Phase 1
-    Python scripts — when you change thresholds in KB, Phase 1 picks
+    This is the runtime bridge between business specs (source of truth) and Phase 1
+    Python scripts — when you change thresholds in specs, Phase 1 picks
     them up automatically on next run.
     """
     try:
